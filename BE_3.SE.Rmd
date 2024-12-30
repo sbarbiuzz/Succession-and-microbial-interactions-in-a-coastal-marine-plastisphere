@@ -1,0 +1,736 @@
+---
+title: "WHD_BE_SpiecEasi"
+output: html_notebook
+---
+
+```{r setup, include = FALSE, print = FALSE}
+
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/Francesca/Documents/INTERNSHIP/") 
+
+```
+
+```{r, echo = FALSE, include = FALSE, print = FALSE}
+
+library(readxl)
+library(dplyr)
+library(purrr)
+library(tidyverse)
+library(reshape2) # melt function
+library(pheatmap)
+
+library(ggplot2)
+library(ggfortify)
+
+# Ecology package
+library(vegan)
+library(phyloseq)
+library(microbiome)
+
+# SPIEC-EASI
+library(SpiecEasi)
+library(igraph)
+library(Matrix)
+
+library(cluster)
+library(factoextra) 
+
+```
+
+```{r}
+
+euk.ps <- readRDS('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_agglomerated.ps.rds')
+bact.ps <- readRDS('Scripts/phyloseq.objects/bact.ps.rds')
+
+be.f <- merge_phyloseq(bact.ps, euk.ps)
+
+#eb.f <- merge_phyloseq(euk.ps, bact.ps)
+```
+
+
+
+# Taxa color
+
+```{r, eval=FALSE}
+
+# Colors per phylum
+taxa.table <- tax_table(be.f)
+
+phyla <- as.character(taxa.table[, "phylum"])
+unique.phyla <- unique(phyla) # list of phylum
+#[1] "Pseudomonadota"                        "Cyanobacteriota"                      
+#[3] "Actinomycetota"                        "Rhodothermota"                        
+#[5] "Bacteroidota"                          "Lentisphaerota"                       
+#[7] "Bacillota"                             "Verrucomicrobiota"                    
+#[9] "Acidobacteriota"                       "Opisthokonta-Metazoa"                 #[11] "Stramenopiles-Gyrista"                 "Rhodophyta-Rhodophyta_X"             
+#[13] "Alveolata-Ciliophora"                  "Rhizaria-Cercozoa"                   
+#[15] "Centroplasthelida-Centroplasthelida_X" "Opisthokonta-Choanoflagellata" 
+#[17] "Stramenopiles-Bigyra"   
+
+custom_colors <- c('maroon', #Pseudomonadota
+                   "forestgreen", #Cyanobacteria
+                   "#A0D655", #Actinobacteria
+                   'orange', #Rhodothermota
+                   "#FF78E5", #Bacteriodota
+                   'blue', #Lentisphaerota
+                   'skyblue', #Bacillota
+                   'purple',# Verrucomicrobiota
+                   '#9C7250', #Acidobacteria
+                   
+                   "#2e5158", # Metazoa
+                   "#6095eb", # Gyrista
+                   "#e69477", # Rhodophyta
+                   '#16fbfa', # Ciliophora
+                   "#fe00e0", #Cercozoa
+                   "#fc1a0f", # Centroplasthelida
+                   '#f5e50d', # Choanoflagellata
+                   '#1c8b16') # Bigyra
+
+
+
+phylum.color <- setNames(custom_colors, unique.phyla)
+
+
+```
+
+```{r}
+
+# Colors per phylum
+taxa.table <- tax_table(eb.f)
+
+phyla <- as.character(taxa.table[, "phylum"])
+unique.phyla <- unique(phyla) # list of phylum
+#[1] "Pseudomonadota"                        "Cyanobacteriota"                      
+#[3] "Actinomycetota"                        "Rhodothermota"                        
+#[5] "Bacteroidota"                          "Lentisphaerota"                       
+#[7] "Bacillota"                             "Verrucomicrobiota"                    
+#[9] "Acidobacteriota"                       "Opisthokonta-Metazoa"                 #[11] "Stramenopiles-Gyrista"                 "Rhodophyta-Rhodophyta_X"             
+#[13] "Alveolata-Ciliophora"                  "Rhizaria-Cercozoa"                   
+#[15] "Centroplasthelida-Centroplasthelida_X" "Opisthokonta-Choanoflagellata" 
+#[17] "Stramenopiles-Bigyra"   
+
+custom_colors <- c("#2e5158", # Metazoa
+                   "#6095eb", # Gyrista
+                   "#e69477", # Rhodophyta
+                   '#16fbfa', # Ciliophora
+                   "#fe00e0", #Cercozoa
+                   "#fc1a0f", # Centroplasthelida
+                   '#f5e50d', # Choanoflagellata
+                   '#1c8b16',# Bigyra
+                   
+                   'maroon', #Pseudomonadota
+                   "forestgreen", #Cyanobacteria
+                   "#A0D655", #Actinobacteria
+                   'orange', #Rhodothermota
+                   "#FF78E5", #Bacteriodota
+                   'blue', #Lentisphaerota
+                   'skyblue', #Bacillota
+                   'purple',# Verrucomicrobiota
+                   '#9C7250') #Acidobacteria) 
+
+
+
+phylum.color <- setNames(custom_colors, unique.phyla)
+
+```
+
+```{r}
+
+# Enrichment colors
+
+de.ds <- read.csv('Scripts/Bact.Euk/Res/BE_DE/res_df.csv')
+
+de.ds$taxonomy <- substr(de.ds$taxonomy, 3, nchar(de.ds$taxonomy))
+rownames(de.ds) <- de.ds$taxonomy
+
+enrichment.color <- c('Summer' = '#d46e6e',
+                      'Fall' = '#7a88c2',
+                      'No enrichment' = 'lightgrey')
+
+```
+
+
+# Analysis
+
+```{r}
+
+be.spieceasi <- readRDS('Scripts/Bact.Euk/Res/BE_SE/EB_spieceasi.rds')
+
+otu <- as.data.frame(eb.f@otu_table)
+
+```
+
+```{r}
+
+set.seed(2121)
+
+# getRefit = the optimal (StARS-refit) network
+adj.mat <- as.matrix(getRefit(be.spieceasi))
+colnames(adj.mat)<- row.names(adj.mat) <- colnames(otu)
+
+# igraph object
+be.gl <- adj2igraph(adj.mat)
+V(be.gl)$name <- colnames(adj.mat)
+
+LO <- layout.fruchterman.reingold(be.gl)
+vsize <- rowMeans(clr(otu),1)+6 # Vertex
+
+# Colors
+taxa.table <- tax_table(eb.f)
+phyla <- as.character(taxa.table[, "phylum"])
+vertex.colors <- sapply(phyla, function(x) phylum.color[x])
+
+# border color
+dtype <- c(rep(1,ntaxa(euk.ps)), rep(2,ntaxa(bact.ps)))
+
+
+#pdf('Scripts/Bact.Euk/Res/BE_SE/BE_interactions.pdf', height = 30, width = 30)
+plot(be.gl, 
+     layout=LO, 
+     
+     vertex.frame.color = dtype,
+     vertex.frame.width = 1,
+     
+     vertex.size= vsize, 
+     vertex.color = vertex.colors,
+     
+     
+     main="SpiecEasi Bacteria & Eukaryotes- Glasso")
+#dev.off()
+
+```
+
+```{r}
+
+# Remove isolated nodes
+
+set.seed(2121)
+
+isolated <- V(be.gl)[degree(be.gl) == 0]
+G2 <- delete.vertices(be.gl, isolated)
+LO2 <- layout.fruchterman.reingold(G2)
+
+vertex.G2 <- V(G2)$name
+vertex.colors.G2 <- vertex.colors[match(vertex.G2, V(be.gl)$name)]
+
+vertex.frame.color.G2 <- dtype[match(vertex.G2, V(be.gl)$name)]
+
+
+#pdf('Scripts/Bact.Euk/Res/BE_SE/BE_circle.isolated.pdf', height = 30, width = 30)
+plot(G2, 
+     layout = LO2, 
+     vertex.size = vsize*2, 
+     vertex.color = vertex.colors.G2,
+     
+     vertex.frame.color = vertex.frame.color.G2,
+     vertex.frame.width = 1.5,
+     
+     vertex.label.cex = 2,
+     vertex.label.family = 'sans',
+     vertex.label.color = 'black',
+     
+     
+     edge.width = E(G2)$width*20)
+#dev.off()
+
+```
+
+```{r}
+
+# Weighted network
+cov.mat <- as.matrix(getOptCov(be.spieceasi))
+colnames(cov.mat)<- row.names(cov.mat) <- colnames(otu)
+
+se.cor <- cov2cor(cov.mat)
+weighted.adj.mat <- se.cor*adj.mat
+weighted.adj.mat <- round(as.matrix(se.cor*adj.mat),5)
+
+# Removing rows and columns with 0
+r <- apply(weighted.adj.mat, 1, function(row) any(row != 0.00000))
+c <- apply(weighted.adj.mat, 2, function(col) any(col != 0.00000))
+
+w.adj.mat <- weighted.adj.mat[r, c]
+
+ get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+
+lower_tri <- get_upper_tri(w.adj.mat)
+
+melted_cormat <- melt(lower_tri, na.rm = TRUE)
+
+# Heatmap
+
+ggplot(data = melted_cormat, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(
+    low = "blue", high = "red", mid = "lightgrey",
+    midpoint = 0, limit = c(-0.25, 0.25), space = "Lab",
+    name = "SE value"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 1, size = 12, hjust = 1),
+    axis.text.y = element_text(size = 12)
+  ) +
+  scale_y_discrete(position = "right") +            # Move y-axis labels to the right
+  coord_fixed() +
+  labs(x = "Variable 1", y = "Variable 2") + # Rename axes
+  geom_text(aes(label = ifelse(value != 0, round(value, 2), "")), size = 3)
+
+#ggsave('Scripts/Bact.Euk/Res/BE_SE/BE_heatmap.pdf', height = 30, width = 30)
+
+```
+
+
+
+```{r}
+
+grph <- adj2igraph(weighted.adj.mat)
+
+# Node list
+V(grph)$name <- colnames(otu)
+V(grph)$size <- (degree(grph) + 1) # the +1 is to avoid size zero vertices
+V(grph)$color <- "#D3D3D3"
+
+#Edges = values in the weighted.adj.mat
+E(grph)$color <- 'green' # POSITIVE
+E(grph)$color[E(grph)$weight<0] <- 'red'#NEGATIVE
+E(grph)$width <- abs(E(grph)$weight)*10
+
+#pdf('Scripts/Bact.Euk/Res/BE_SE/BE_circleInteractions.pdf', height = 80, width = 80)
+plot(grph,
+     vertex.label.cex=2,
+     vertex.label.color="black",
+     vertex.color = dtype,
+     layout=layout.circle(grph))
+#dev.off()
+
+```
+
+```{r}
+
+
+# Remove isolated nodes
+set.seed(2121)
+
+isolated <- V(grph)[degree(grph) == 0]
+G2 <- delete.vertices(grph, isolated)
+
+vertex.G2 <- V(G2)$name
+
+# Phylum colors
+#vertex.colors.G2 <- vertex.colors[match(vertex.G2, V(be.gl)$name)]
+
+# Enrichment color
+enrichment.status <- de.ds$expression[match(vertex.G2, de.ds$taxonomy)]  # Map enrichment status to vertices
+vertex.colors.G2 <- enrichment.color[enrichment.status]
+
+
+vertex.frame.color.G2 <- dtype[match(vertex.G2, V(be.gl)$name)]
+
+
+#pdf('Scripts/Bact.Euk/Res/BE_SE/EB_circle.isolated.weighted.enrichment.pdf', height = 60, width = 50)
+plot(G2, 
+     vertex.size = vsize, 
+     vertex.color = vertex.colors.G2,
+     vertex.frame.color = vertex.frame.color.G2,
+     vertex.frame.width = 10,
+     vertex.label.cex = 1,
+     vertex.label.family = 'sans',
+     vertex.label.color = 'black',
+     edge.width = E(G2)$width*12)
+
+
+# Legend for phyla colors
+legend("bottomleft", 
+       legend = c('Summer','Fall', 'No enrichment'), 
+       fill = enrichment.color, 
+       title = "Phylum",
+       cex = 3,
+       ncol = 2)  # Adjust size of legend text
+legend("bottomright", 
+       legend = c('Bacteria', 'Eukaryotes'), 
+       fill = unique(vertex.frame.color.G2), 
+       title = "Kingdom",
+       cex = 3)  # Adjust size of legend text
+
+
+#dev.off()
+
+
+
+```
+
+
+### Degree
+
+```{r}
+
+deg <- degree(grph)
+
+otu <- as.data.frame(be.f@otu_table)
+
+#otu.dg <- apply(otu, 1, function(x) x / max_abundance * deg[colnames(otu)])
+
+#otu.dg <- t(otu.dg)
+
+otu.norm <- apply(otu, 2, function(x) x / max(x))
+
+```
+
+
+### Clustering
+
+```{r}
+
+fviz_nbclust(cov.mat, kmeans, method = "silhouette")
+# 2
+
+k <- kmeans(cov.mat, centers = 4)
+fviz_cluster(k, cov.mat)
+
+```
+
+```{r}
+
+obj.names <- rownames(cov.mat)  # Extract object names
+
+res.df <- data.frame(object = obj.names, 
+                     cluster = k$cluster)
+
+clust <- split(obj.names, k$cluster)
+
+```
+
+#### Cluster 1
+
+```{r}
+
+adj.mat.1 <- w.adj.mat[clust$'1', clust$'1']
+
+grph <- adj2igraph(adj.mat.1)
+
+# Node list
+V(grph)$name <- colnames(adj.mat.1)
+V(grph)$size <- (degree(grph) + 1) # the +1 is to avoid size zero vertices
+V(grph)$color <- "#D3D3D3"
+
+#Edges = values in the weighted.adj.mat
+E(grph)$color <- 'green' # POSITIVE
+E(grph)$color[E(grph)$weight<0] <- 'red'#NEGATIVE
+E(grph)$width <- abs(E(grph)$weight)*10
+
+#pdf('Scripts/Bact.Euk/Res/BE_SE/BE_circleInteractions.pdf', height = 80, width = 80)
+plot(grph,
+     vertex.label.cex=2,
+     vertex.label.color="black",
+     vertex.color = dtype,
+     layout=layout.circle(grph))
+#dev.off()
+
+```
+
+```{r}
+
+c1 <- clust$'1'
+
+sub.otu <- as.data.frame(t(otu.norm))
+sub.otu$OTU.ID <- rownames(sub.otu)
+
+# Subset and long format
+otu.c1 <- sub.otu %>%
+  filter(OTU.ID %in% c1) %>%
+  pivot_longer(names_to = "Sample", values_to = "Abundance", cols=-OTU.ID)
+
+ggplot(otu.c1, aes(x = Sample, y = Abundance, color = OTU.ID, group = OTU.ID))+
+  geom_line() +
+  geom_point() +
+  labs(title = "Normalized abundance across samples", 
+       x = "Sample", y = "Abundance") +
+  theme_minimal()
+
+```
+
+
+#### Cluster 2
+
+```{r}
+
+adj.mat.2 <- w.adj.mat[clust$'2', clust$'2']
+
+grph <- adj2igraph(adj.mat.2)
+
+# Node list
+V(grph)$name <- colnames(adj.mat.2)
+V(grph)$size <- (degree(grph) + 1) # the +1 is to avoid size zero vertices
+V(grph)$color <- "#D3D3D3"
+dtype <- ifelse(grepl("^B_", V(grph)$name), 1, 
+                ifelse(grepl("^E_", V(grph)$name), 2, NA))
+
+#Edges = values in the weighted.adj.mat
+E(grph)$color <- 'green' # POSITIVE
+E(grph)$color[E(grph)$weight<0] <- 'red'#NEGATIVE
+E(grph)$width <- abs(E(grph)$weight)*10
+
+#pdf('Scripts/Bact.Euk/Res/BE_SE/BE_circleInteractions.pdf', height = 80, width = 80)
+plot(grph,
+     vertex.label.cex=2,
+     vertex.label.color="black",
+     vertex.color = dtype,
+     layout=layout.circle(grph))
+#dev.off()
+
+```
+
+```{r}
+
+c1 <- clust$'2'
+
+sub.otu <- as.data.frame(t(otu.norm))
+sub.otu$OTU.ID <- rownames(sub.otu)
+
+# Subset and long format
+otu.c1 <- sub.otu %>%
+  filter(OTU.ID %in% c1) %>%
+  pivot_longer(names_to = "Sample", values_to = "Abundance", cols=-OTU.ID)
+
+ggplot(otu.c1, aes(x = Sample, y = Abundance, color = OTU.ID, group = OTU.ID))+
+  geom_line() +
+  geom_point() +
+  theme(legend.position = "none")
+  labs(title = "Normalized abundance across samples", 
+       x = "Sample", y = "Abundance") +
+  theme_minimal()
+
+```
+
+#### Cluster 3
+
+```{r}
+
+adj.mat.3 <- w.adj.mat[clust$'3', clust$'3']
+
+grph <- adj2igraph(adj.mat.3)
+
+# Node list
+V(grph)$name <- colnames(adj.mat.3)
+V(grph)$size <- (degree(grph) + 1) # the +1 is to avoid size zero vertices
+V(grph)$color <- "#D3D3D3"
+dtype <- ifelse(grepl("^B_", V(grph)$name), 1, 
+                ifelse(grepl("^E_", V(grph)$name), 2, NA))
+
+#Edges = values in the weighted.adj.mat
+E(grph)$color <- 'green' # POSITIVE
+E(grph)$color[E(grph)$weight<0] <- 'red'#NEGATIVE
+E(grph)$width <- abs(E(grph)$weight)*10
+
+#pdf('Scripts/Bact.Euk/Res/BE_SE/BE_circleInteractions.pdf', height = 80, width = 80)
+plot(grph,
+     vertex.label.cex=2,
+     vertex.label.color="black",
+     vertex.color = dtype,
+     layout=layout.circle(grph))
+#dev.off()
+
+```
+
+```{r}
+
+c1 <- clust$'3'
+
+sub.otu <- as.data.frame(t(otu.norm))
+sub.otu$OTU.ID <- rownames(sub.otu)
+
+# Subset and long format
+otu.c1 <- sub.otu %>%
+  filter(OTU.ID %in% c1) %>%
+  pivot_longer(names_to = "Sample", values_to = "Abundance", cols=-OTU.ID)
+
+ggplot(otu.c1, aes(x = Sample, y = Abundance, color = OTU.ID, group = OTU.ID))+
+  geom_line() +
+  geom_point() +
+  labs(title = "Normalized abundance across samples", 
+       x = "Sample", y = "Abundance") +
+  theme_minimal()
+
+```
+
+#### Cluster 4
+
+```{r}
+
+adj.mat.4 <- w.adj.mat[clust$'4', clust$'4']
+
+grph <- adj2igraph(adj.mat.4)
+
+# Node list
+V(grph)$name <- colnames(adj.mat.4)
+V(grph)$size <- (degree(grph) + 1) # the +1 is to avoid size zero vertices
+V(grph)$color <- "#D3D3D3"
+dtype <- ifelse(grepl("^B_", V(grph)$name), 1, 
+                ifelse(grepl("^E_", V(grph)$name), 2, NA))
+
+#Edges = values in the weighted.adj.mat
+E(grph)$color <- 'green' # POSITIVE
+E(grph)$color[E(grph)$weight<0] <- 'red'#NEGATIVE
+E(grph)$width <- abs(E(grph)$weight)*10
+
+#pdf('Scripts/Bact.Euk/Res/BE_SE/BE_circleInteractions.pdf', height = 80, width = 80)
+plot(grph,
+     vertex.label.cex=2,
+     vertex.label.color="black",
+     vertex.color = dtype,
+     layout=layout.circle(grph))
+#dev.off()
+
+```
+
+```{r}
+
+c1 <- clust$'4'
+
+sub.otu <- as.data.frame(t(otu.norm))
+sub.otu$OTU.ID <- rownames(sub.otu)
+
+# Subset and long format
+otu.c1 <- sub.otu %>%
+  filter(OTU.ID %in% c1) %>%
+  pivot_longer(names_to = "Sample", values_to = "Abundance", cols=-OTU.ID)
+
+ggplot(otu.c1, aes(x = Sample, y = Abundance, color = OTU.ID, group = OTU.ID))+
+  geom_line() +
+  geom_point() +
+  labs(title = "Normalized abundance across samples", 
+       x = "Sample", y = "Abundance") +
+  theme_minimal()
+
+```
+
+##### Clusters
+
+```{r}
+
+clust.n <- as.factor(k$cluster)
+
+otu.c <- as.data.frame(t(otu.norm))
+otu.c$cluster <- clust.n
+otu.c$OTU <- rownames(otu.c)
+
+otu_long <- otu.c %>%
+  pivot_longer(cols = -c(cluster, OTU), 
+               names_to = "sample", 
+               values_to = "count")
+
+otu_summary <- otu_long %>%
+  group_by(cluster, sample) %>%
+  summarise(mean_count = mean(count), .groups = "drop")
+
+
+ggplot(otu_summary, aes(x = sample, y = mean_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = "Mean Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+
+### Edges analysis
+
+```{r}
+
+# Edges weight is the SE value!, the width is the absolute value in order to show it when plotted
+
+# INTERACTIONS
+df <- as_data_frame(grph, what = 'both')
+edg <- df$edges
+# 655 5
+
+pos.edg <- edg[edg$weight > 0, ] # 423
+neg.edg <- edg[edg$weight < 0, ] # 232
+
+```
+
+
+```{r}
+
+edg.eb <- edg %>%
+  filter(grepl("^E_", from) & grepl("^B_", to))
+# NONE! but SE is not directional!
+
+edg.be <- edg %>%
+  filter(grepl("^B_", from) & grepl("^E_", to)) %>%
+  select(-color, )
+# 91
+
+bi.graph <- graph_from_data_frame(edg.be, directed = FALSE) 
+# is bipartite
+
+V(bi.graph)$type <- ifelse(V(bi.graph)$name %in% edg.be$from, TRUE, FALSE)
+
+E(bi.graph)$color <- 'green' # POSITIVE
+E(bi.graph)$color[E(bi.graph)$weight<0] <- 'red'#NEGATIVE
+
+LO <- layout_as_bipartite(bi.graph)
+LO = LO[,c(2,1)]
+
+# Plot the bipartite graph
+plot(bi.graph,
+     layout = LO,
+     vertex.label = V(bi.graph)$name,
+     vertex.color = ifelse(V(bi.graph)$type, 
+                           "lightblue", "lightgreen"),
+     main = "Bipartite Graph")
+
+
+```
+
+
+
+### Covariance Matrix Interactions (DONE WITH EDGES)
+
+```{r}
+
+secorBE  <- cov2cor(cov.mat) #167 167
+
+be.spieceasi.gl <- triu(secorBE*adj.mat, k=1)
+melted_SE <- melt(as.matrix(be.spieceasi.gl)) # 24 649
+melted_SE <- melted_SE[melted_SE$value != 0, ]
+colnames(melted_SE) <- c('Var1', 'Var2', 'Value.SE')
+
+melted_SE
+# 655 interactions
+
+saveRDS(melted_SE, 'Scripts/Bact.Euk/Res/BE_SE/BE_melted.spieceasi.rds')
+
+ggplot(melted_SE, aes(Value.SE)) +
+  geom_histogram(binwidth = 0.01, fill = "blue", color = "black") +
+  labs(title = "Histogram of SE", x = "SE value", y = "Frequency") +
+  theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_SE/BE_histogram.pdf')
+
+# same plot as before but with ordinated WHD
+
+```
+
+# ALGORITHM
+```{r, eval = FALSE}
+
+set.seed(2112)
+
+be.spieceasi <- spiec.easi(list(euk.ps, bact.ps), 
+                             method='glasso', 
+                             lambda.min.ratio=1e-2,
+                             nlambda=20, 
+                             pulsar.params=list(rep.num=50))
+
+```
+
+```{r, eval = FALSE}
+
+saveRDS(be.spieceasi, 'Scripts/Bact.Euk/Res/BE_SE/EB_spieceasi.rds')
+
+```

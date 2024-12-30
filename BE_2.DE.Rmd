@@ -1,0 +1,778 @@
+---
+title: "WHD_BE_DifferentialAbundance"
+output: html_notebook
+---
+
+```{r setup, include = FALSE, print = FALSE}
+
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/Francesca/Documents/INTERNSHIP/") 
+
+```
+
+```{r, echo = FALSE, include = FALSE, print = FALSE}
+
+library(readxl)
+library(dplyr)
+library(purrr)
+library(tidyverse)
+library(reshape2) # melt function
+
+library(ggplot2)
+library(ggfortify)
+library(RColorBrewer)
+
+library(SpiecEasi)
+
+# Ecology package
+library(vegan)
+library(phyloseq)
+library(microbiome)
+
+# aIDA
+library(pcalg)
+library(Rgraphviz)
+library(graph)
+library(pheatmap)
+library(ComplexHeatmap)
+library(DESeq2)
+library(igraph)
+
+library(microViz)
+
+library(ggrepel)
+
+
+```
+
+```{r}
+
+b.f <- readRDS('Scripts/phyloseq.objects/bact.ps.rds') # 99
+e.f <- readRDS('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_agglomerated.ps.rds') # 58
+
+```
+
+```{r}
+
+metadata <- as.data.frame(sample_data(b.f))
+
+# Bacteria
+b.otu <- as.data.frame(otu_table(b.f))
+colnames(b.otu) <- paste("B_", colnames(b.otu), sep = "")
+
+b.taxa <- as.data.frame(tax_table(b.f))
+rownames(b.taxa) <- paste("B_", rownames(b.taxa), sep = "")
+
+b.f <- phyloseq(otu_table(b.otu, taxa_are_rows = F),
+                tax_table(as.matrix(b.taxa)),
+                sample_data(metadata))
+
+# Eukaryotes
+e.otu <- as.data.frame(otu_table(e.f))
+colnames(e.otu) <- paste("E_", colnames(e.otu), sep = "")
+
+e.taxa <- as.data.frame(tax_table(e.f))
+rownames(e.taxa) <- paste("E_", rownames(e.taxa), sep = "")
+
+e.f <- phyloseq(otu_table(e.otu, taxa_are_rows = F),
+                tax_table(as.matrix(e.taxa)),
+                sample_data(metadata))
+
+```
+
+```{r}
+
+be.ps <- merge_phyloseq(b.f, e.f)
+
+```
+
+
+# Material
+
+```{r}
+
+material <- unique(sample_data(be.ps)$material)
+# [1] "polypropylene"   "high density polyethylene" "polystyrene" 
+# [4] "glass"
+
+material.ps <- list()
+
+for (mat in material) {
+  ps.subset <- subset_samples(be.ps, material == mat)
+  material.ps[[mat]] <- ps.subset
+}
+
+metadata <- as.data.frame(be.ps@sam_data)
+
+# Phyloseq object per material
+ppp <- material.ps$polypropylene
+pee <- material.ps$`high density polyethylene`
+psy <- material.ps$polystyrene
+glass <- material.ps$glass
+
+```
+
+## Polypropylene (PPP)
+
+```{r}
+
+otu <- ppp@otu_table
+# 13 samples
+
+# FOR SELECTING TOP ABUNDANCES
+tot.abundance <- colSums(otu)
+
+# Max abundance index for each OTU
+#tops <- order(tot.abundance, decreasing = TRUE)[1:30]
+#otu <- otu[,tops]
+
+# Normalization of each OTU based on its maximum abundance
+# Only one 1.0 per columns, as it will be maximum only in one sample
+otu <- apply(otu, 2, function(x) x / max(x))
+otu <- t(otu)
+
+wheremax <- apply(otu, 1, which.max) # max location of OTU
+otu.order <- order(wheremax)
+otu.ordered <- otu[otu.order,]
+
+colnames(otu.ordered) <- c('Rep1 2013-07-17', 'Rep2 2013-07-17', 'Rep3 2013-07-17', 'Rep1 2013-07-24', 'Rep2 2013-07-24', 'Rep1 2013-07-31', 'Rep2 2013-07-31', 'Rep3 2013-07-31', 'Rep1 2013-08-07', 'Rep2 2013-08-07', '2013-09-06', 'Rep1 2013-11-06', 'Rep2 2013-11-06')
+
+#pdf('Scripts/Bact.Euk/Res/BE_DE/PPP_timeseries.pdf',height = 30, width = 15)
+Heatmap(otu.ordered,
+        column_order = colnames(otu.ordered),
+        cluster_rows = F,
+        
+        column_title = 'Polypropylene',
+        column_title_gp = gpar(fontsize=30),
+        
+        row_title_side = 'right',
+        row_names_max_width = unit(6, "cm"),
+        
+        heatmap_legend_param = list(title = "Relative abundance",
+                                    title_position = 'leftcenter-rot')) 
+#dev.off()
+
+```
+
+```{r}
+
+# Early colonizers
+
+otu_1707 <- otu.ordered[, c('17/07 - 1', '17/07 - 2', '17/07 - 3')]
+otu_1707 <- otu_1707[apply(otu_1707, 1, max) == 1, ] # 23
+early.colonizers_ppp <- c(row.names(otu_1707))
+
+otu_2407 <- otu.ordered[, c('24/07 - 1', '24/07 - 2')]
+otu_2407 <- otu_2407[apply(otu_2407, 1, max) == 1, ] # 65
+colonizers2407_ppp <- c(row.names(otu_2407))
+
+otu_3107 <- otu.ordered[, c('31/07 - 1', '31/07 - 2', '31/07 - 3')]
+otu_3107 <- otu_3107[apply(otu_3107, 1, max) == 1, ] # 20
+colonizers3107_ppp <- c(row.names(otu_3107))
+
+otu_0708 <- otu.ordered[, c('07/08 - 1', '07/08 - 2')]
+otu_0708 <- otu_0708[apply(otu_0708, 1, max) == 1, ] # 18
+colonizers0708_ppp <- c(row.names(otu_0708))
+
+otu_0609 <- otu.ordered[, '06/09', drop = FALSE]  # Keep it as a data frame, not a vect
+otu_0609 <- otu_0609[apply(otu_0609, 1, max) == 1, ] # 10
+colonizers0609_ppp <- names(otu_0609)
+
+otu_0611 <- otu.ordered[, c('06/11 - 1', '06/11 - 2')]
+otu_0611 <- otu_0611[apply(otu_0611, 1, max) == 1, ] # 21
+colonizers0611_ppp <- c(row.names(otu_0611))
+
+```
+
+
+## High density polyethylene (PEE)
+
+```{r}
+
+otu <- pee@otu_table
+# 14 samples
+
+# FOR SELECTING TOP ABUNDANCES
+#tot.abundance <- colSums(otu)
+
+# Max abundance index for each OTU
+#tops <- order(tot.abundance, decreasing = TRUE)[1:30]
+#otu <- otu[,tops]
+
+# Normalization of each OTU based on its maximum abundance
+otu <- apply(otu, 2, function(x) x / max(x))
+otu <- t(otu)
+
+wheremax <- apply(otu, 1, which.max)
+otu.order <- order(wheremax)
+otu.ordered <- otu[otu.order,]
+
+colnames(otu.ordered) <- c('Rep1 2013-07-17', 'Rep2 2013-07-17', 'Rep3 2013-07-17', 'Rep1 2013-07-24', 'Rep2 2013-07-24', 'Rep1 2013-07-31', 'Rep2 2013-07-31', 'Rep1 2013-08-07', 'Rep2 2013-08-07', 'Rep3 2013-08-07','Rep1 2013-09-06','Rep2 2013-09-06', '2013-10-02', '2013-11-06')
+
+#pdf('Scripts/Bact.Euk/Res/BE_DE/HDP_timeseries.pdf',height = 30, width = 15)
+Heatmap(otu.ordered,
+        column_order = colnames(otu.ordered),
+        cluster_rows = F,
+        
+        column_title = 'High-density Polyethylene',
+        column_title_gp = gpar(fontsize=30),
+        
+        row_title_side = 'right',
+        row_names_max_width = unit(6, "cm"),
+        
+        heatmap_legend_param = list(title = "Relative abundance",
+                                    title_position = 'leftcenter-rot')) 
+#dev.off()
+
+```
+
+```{r}
+
+otu_1707 <- otu.ordered[, c('17/07 - 1', '17/07 - 2', '17/07 - 3')]
+otu_1707 <- otu_1707[apply(otu_1707, 1, max) == 1, ]
+early.colonizers_hdp <- c(row.names(otu_1707))
+
+otu_2407 <- otu.ordered[, c('24/07 - 1', '24/07 - 2')]
+otu_2407 <- otu_2407[apply(otu_2407, 1, max) == 1, ]
+colonizers2407_hdp <- c(row.names(otu_2407))
+
+otu_3107 <- otu.ordered[, c('31/07 - 1', '31/07 - 2')]
+otu_3107 <- otu_3107[apply(otu_3107, 1, max) == 1, ]
+colonizers3107_hdp <- c(row.names(otu_3107))
+
+otu_0708 <- otu.ordered[, c('07/08 - 1', '07/08 - 2', '07/08 - 3')]
+otu_0708 <- otu_0708[apply(otu_0708, 1, max) == 1, ]
+colonizers0708_hdp <- c(row.names(otu_0708))
+
+otu_0609 <- otu.ordered[, c('06/09 - 1', '06/09 - 2')]
+otu_0609 <- otu_0609[apply(otu_0609, 1, max) == 1, ]
+colonizers0609_hdp <- c(row.names(otu_0609))
+
+otu_0210 <- otu.ordered[, '02/10', drop = FALSE]
+otu_0210 <- otu_0210[apply(otu_0210, 1, max) == 1, ]
+colonizers0210_hdp <- names(otu_0210)
+
+otu_0611 <- otu.ordered[, '06/11', drop = FALSE]
+otu_0611 <- otu_0611[apply(otu_0611, 1, max) == 1, ]
+colonizers0611_hdp <- names(otu_0611)
+
+```
+
+
+## Polystyrene (PSY)
+
+```{r}
+
+otu <- psy@otu_table
+# 13 samples
+
+# FOR SELECTING TOP ABUNDANCES
+#tot.abundance <- colSums(otu)
+
+# Max abundance index for each OTU
+#tops <- order(tot.abundance, decreasing = TRUE)[1:30]
+#otu <- otu[,tops]
+
+# Normalization of each OTU based on its maximum abundance
+otu <- apply(otu, 2, function(x) x / max(x))
+otu <- t(otu)
+
+wheremax <- apply(otu, 1, which.max)
+otu.order <- order(wheremax)
+otu.ordered <- otu[otu.order,]
+
+colnames(otu.ordered) <- c('Rep1 2013-07-17', 'Rep2 2013-07-17', 'Rep3 2013-07-17', 'Rep1 2013-07-24', 'Rep2 2013-07-24', 'Rep1 2013-07-31', 'Rep2 2013-07-31','Rep3 2013-07-31', '2013-08-07', 'Rep1 2013-09-06','Rep2 2013-09-06', 'Rep1 2013-10-02',  'Rep2 2013-10-02')
+
+#pdf('Scripts/Bact.Euk/Res/BE_DE/PSY_timeseries.pdf',height = 30, width = 15)
+Heatmap(otu.ordered,
+        column_order = colnames(otu.ordered),
+        cluster_rows = F,
+        
+        column_title = 'Polystyrene',
+        column_title_gp = gpar(fontsize=30),
+        
+        row_title_side = 'right',
+        row_names_max_width = unit(6, "cm"),
+        
+        heatmap_legend_param = list(title = "Relative abundance",
+                                    title_position = 'leftcenter-rot')) 
+#dev.off()
+
+```
+
+```{r}
+
+otu_1707 <- otu.ordered[, c('17/07 - 1', '17/07 - 2', '17/07 - 3')]
+otu_1707 <- otu_1707[apply(otu_1707, 1, max) == 1, ]
+early.colonizers_psy <- c(row.names(otu_1707))
+
+otu_2407 <- otu.ordered[, c('24/07 - 1', '24/07 - 2')]
+otu_2407 <- otu_2407[apply(otu_2407, 1, max) == 1, ]
+colonizers2407_psy <- c(row.names(otu_2407))
+
+otu_3107 <- otu.ordered[, c('31/07 - 1', '31/07 - 2', '31/07 - 3')]
+otu_3107 <- otu_3107[apply(otu_3107, 1, max) == 1, ]
+colonizers3107_psy <- c(row.names(otu_3107))
+
+otu_0708 <- otu.ordered[, '07/08', drop = FALSE]
+otu_0708 <- otu_0708[apply(otu_0708, 1, max) == 1, ]
+colonizers0708_psy <- names(otu_0708)
+
+otu_0609 <- otu.ordered[, c('06/09 - 1', '06/09 - 2')]
+otu_0609 <- otu_0609[apply(otu_0609, 1, max) == 1, ]
+colonizers0609_psy <- c(row.names(otu_0609))
+
+otu_0210 <- otu.ordered[, c('02/10 - 1', '02/10 - 2')]
+otu_0210 <- otu_0210[apply(otu_0210, 1, max) == 1, ]
+colonizers0210_hdp <- c(row.names(otu_0210))
+
+```
+
+
+## Glass
+
+```{r}
+
+otu <- glass@otu_table
+# 11 samples
+
+# FOR SELECTING TOP ABUNDANCES
+#tot.abundance <- colSums(otu)
+
+# Max abundance index for each OTU
+#tops <- order(tot.abundance, decreasing = TRUE)[1:30]
+#otu <- otu[,tops]
+
+# Normalization of each OTU based on its maximum abundance
+otu <- apply(otu, 2, function(x) x / max(x))
+otu <- t(otu)
+
+wheremax <- apply(otu, 1, which.max)
+otu.order <- order(wheremax)
+otu.ordered <- otu[otu.order,]
+
+colnames(otu.ordered) <- c('Rep1 2013-07-17', 'Rep2 2013-07-17', 'Rep1 2013-07-24', 'Rep2 2013-07-24', 'Rep1 2013-07-31', 'Rep2 2013-07-31', '2013-08-07', 'Rep1 2013-09-06','Rep2 2013-09-06','Rep3 2013-09-06', '2013-10-02')
+
+#pdf('Scripts/Bact.Euk/Res/BE_DE/G_timeseries.pdf',height = 30, width = 15)
+Heatmap(otu.ordered,
+        column_order = colnames(otu.ordered),
+        cluster_rows = F,
+        
+        column_title = 'Glass',
+        column_title_gp = gpar(fontsize=30),
+        
+        row_names_max_width = unit(6, "cm"),
+        
+        heatmap_legend_param = list(title = "Relative abundance",
+                                    title_position = 'leftcenter-rot')) 
+#dev.off()
+
+```
+
+```{r}
+
+otu_1707 <- otu.ordered[, c('Rep1 2013-07-17', 'Rep2 2013-07-17')]
+otu_1707 <- otu_1707[apply(otu_1707, 1, max) == 1, ]
+early.colonizers_g <- c(row.names(otu_1707))
+
+otu_2407 <- otu.ordered[, c('24/07 - 1', '24/07 - 2')]
+otu_2407 <- otu_2407[apply(otu_2407, 1, max) == 1, ]
+colonizers2407_g <- c(row.names(otu_2407))
+
+otu_3107 <- otu.ordered[, c('31/07 - 1', '31/07 - 2')]
+otu_3107 <- otu_3107[apply(otu_3107, 1, max) == 1, ]
+colonizers3107_g <- c(row.names(otu_3107))
+
+otu_0708 <- otu.ordered[, '07/08', drop = FALSE]
+otu_0708 <- otu_0708[apply(otu_0708, 1, max) == 1, ]
+colonizers0708_g <- names(otu_0708)
+
+otu_0609 <- otu.ordered[, c('06/09 - 1', '06/09 - 2', '06/09 - 3')]
+otu_0609 <- otu_0609[apply(otu_0609, 1, max) == 1, ]
+colonizers0609_g <- c(row.names(otu_0609))
+
+otu_0210 <- otu.ordered[, '02/10', drop = FALSE]
+otu_0210 <- otu_0210[apply(otu_0210, 1, max) == 1, ]
+colonizers0210_g <- names(otu_0210)
+
+```
+
+
+# Common Taxa
+## 17.07
+
+```{r}
+
+common.early.colonizers <- Reduce(intersect, list(early.colonizers_g, 
+                                                  early.colonizers_ppp,
+                                                  early.colonizers_psy,
+                                                  early.colonizers_hdp
+                                                  ))
+
+ASVS <- as.character(unlist(common.early.colonizers))
+
+otu <- as.data.frame(be.ps@otu_table)
+
+tot.abundance <- colSums(otu)
+
+otu <- apply(otu, 2, function(x) x / max(x))
+otu <- t(otu)
+
+wheremax <- apply(otu, 1, which.max) # max location of OTU
+otu.order <- order(wheremax)
+otu.ordered <- otu[otu.order,]
+
+samp <- readRDS('Scripts/timematerialreplicate.rds')
+
+sub.otu <- as.data.frame(otu.ordered)
+sub.otu$OTU.ID <- rownames(sub.otu)
+
+# Subset and long format
+sub.otu <- sub.otu %>%
+  filter(OTU.ID %in% ASVS) %>%
+  pivot_longer(names_to = "Sample", values_to = "Abundance", cols=-OTU.ID)
+
+ggplot(sub.otu, aes(x = Sample, y = Abundance, color = OTU.ID, group = OTU.ID))+
+  geom_line() +
+  #geom_point() +
+  labs(x = "Sample", y = "Relative Abundance") +
+  scale_x_discrete(labels = samp) +
+  theme_bw()+
+  #facet_wrap(~ collection_date, scales = 'fixed', nrow = 1) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+#ggsave('Scripts/Bact.Euk/Res/BE_DE/1707.pdf', height =  10, width = 17)
+
+```
+## 24/07
+
+```{r}
+
+colonizers_2407 <- Reduce(intersect, list(colonizers2407_psy,
+                                          colonizers2407_ppp,
+                                          colonizers2407_hdp,
+                                          colonizers2407_g
+                                          ))
+
+
+
+ASVS <- as.character(unlist(colonizers_2407))
+
+otu <- as.data.frame(be.ps@otu_table)
+
+tot.abundance <- colSums(otu)
+
+otu <- apply(otu, 2, function(x) x / max(x))
+otu <- t(otu)
+
+wheremax <- apply(otu, 1, which.max) # max location of OTU
+otu.order <- order(wheremax)
+otu.ordered <- otu[otu.order,]
+
+
+sub.otu <- as.data.frame(otu.ordered)
+sub.otu$OTU.ID <- rownames(sub.otu)
+
+# Subset and long format
+sub.otu <- sub.otu %>%
+  filter(OTU.ID %in% ASVS) %>%
+  pivot_longer(names_to = "Sample", values_to = "Abundance", cols=-OTU.ID)
+
+ggplot(sub.otu, aes(x = Sample, y = Abundance, color = OTU.ID, group = OTU.ID))+
+  geom_line() +
+  #geom_point() +
+  labs(title = "Normalized abundance across samples", 
+       x = "Sample", y = "Abundance") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_DE/2407.pdf')
+
+```
+
+## 31/07
+
+```{r}
+
+colonizers_3107 <- Reduce(intersect, list(colonizers3107_psy,
+                                          colonizers3107_ppp,
+                                          colonizers3107_hdp,
+                                          colonizers3107_g
+                                          ))
+
+
+
+ASVS <- as.character(unlist(colonizers_3107))
+
+otu <- as.data.frame(be.ps@otu_table)
+
+tot.abundance <- colSums(otu)
+
+otu <- apply(otu, 2, function(x) x / max(x))
+otu <- t(otu)
+
+wheremax <- apply(otu, 1, which.max) # max location of OTU
+otu.order <- order(wheremax)
+otu.ordered <- otu[otu.order,]
+
+
+sub.otu <- as.data.frame(otu.ordered)
+sub.otu$OTU.ID <- rownames(sub.otu)
+
+# Subset and long format
+sub.otu <- sub.otu %>%
+  filter(OTU.ID %in% ASVS) %>%
+  pivot_longer(names_to = "Sample", values_to = "Abundance", cols=-OTU.ID)
+
+ggplot(sub.otu, aes(x = Sample, y = Abundance, color = OTU.ID, group = OTU.ID))+
+  geom_line() +
+  #geom_point() +
+  labs(title = "Normalized abundance across samples", 
+       x = "Sample", y = "Abundance") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_DE/3107.pdf')
+
+```
+
+## 07/08
+
+```{r}
+
+colonizers_0708 <- Reduce(intersect, list(colonizers0708_psy,
+                                          colonizers0708_ppp,
+                                          colonizers0708_hdp,
+                                          colonizers0708_g
+                                          ))
+
+
+
+ASVS <- as.character(unlist(colonizers_0708))
+
+otu <- as.data.frame(be.ps@otu_table)
+
+tot.abundance <- colSums(otu)
+
+otu <- apply(otu, 2, function(x) x / max(x))
+otu <- t(otu)
+
+wheremax <- apply(otu, 1, which.max) # max location of OTU
+otu.order <- order(wheremax)
+otu.ordered <- otu[otu.order,]
+
+
+sub.otu <- as.data.frame(otu.ordered)
+sub.otu$OTU.ID <- rownames(sub.otu)
+
+# Subset and long format
+sub.otu <- sub.otu %>%
+  filter(OTU.ID %in% ASVS) %>%
+  pivot_longer(names_to = "Sample", values_to = "Abundance", cols=-OTU.ID)
+
+ggplot(sub.otu, aes(x = Sample, y = Abundance, color = OTU.ID, group = OTU.ID))+
+  geom_line() +
+  #geom_point() +
+  labs(title = "Normalized abundance across samples", 
+       x = "Sample", y = "Abundance") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_DE/0708.pdf')
+
+```
+
+
+## 06/09
+
+```{r}
+
+colonizers_0609 <- Reduce(intersect, list(colonizers0609_psy,
+                                          colonizers0609_ppp,
+                                          colonizers0609_hdp,
+                                          colonizers0609_g
+                                          ))
+
+
+
+ASVS <- as.character(unlist(colonizers_0609))
+
+otu <- as.data.frame(be.ps@otu_table)
+
+tot.abundance <- colSums(otu)
+
+otu <- apply(otu, 2, function(x) x / max(x))
+otu <- t(otu)
+
+wheremax <- apply(otu, 1, which.max) # max location of OTU
+otu.order <- order(wheremax)
+otu.ordered <- otu[otu.order,]
+
+
+sub.otu <- as.data.frame(otu.ordered)
+sub.otu$OTU.ID <- rownames(sub.otu)
+
+# Subset and long format
+sub.otu <- sub.otu %>%
+  filter(OTU.ID %in% ASVS) %>%
+  pivot_longer(names_to = "Sample", values_to = "Abundance", cols=-OTU.ID)
+
+ggplot(sub.otu, aes(x = Sample, y = Abundance, color = OTU.ID, group = OTU.ID))+
+  geom_line() +
+  #geom_point() +
+  labs(title = "Normalized abundance across samples", 
+       x = "Sample", y = "Abundance") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_DE/0609.pdf')
+
+```
+
+## 02/10
+
+```{r}
+
+colonizers_0210 <- Reduce(intersect, list(colonizers0210_g,
+                                          colonizers0210_hdp
+                                          ))
+
+
+
+ASVS <- as.character(unlist(colonizers_0210))
+
+otu <- as.data.frame(be.ps@otu_table)
+
+tot.abundance <- colSums(otu)
+
+otu <- apply(otu, 2, function(x) x / max(x))
+otu <- t(otu)
+
+wheremax <- apply(otu, 1, which.max) # max location of OTU
+otu.order <- order(wheremax)
+otu.ordered <- otu[otu.order,]
+
+
+sub.otu <- as.data.frame(otu.ordered)
+sub.otu$OTU.ID <- rownames(sub.otu)
+
+# Subset and long format
+sub.otu <- sub.otu %>%
+  filter(OTU.ID %in% ASVS) %>%
+  pivot_longer(names_to = "Sample", values_to = "Abundance", cols=-OTU.ID)
+
+ggplot(sub.otu, aes(x = Sample, y = Abundance, color = OTU.ID, group = OTU.ID))+
+  geom_line() +
+  #geom_point() +
+  labs(title = "Normalized abundance across samples", 
+       x = "Sample", y = "Abundance") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_DE/0210.pdf')
+
+```
+
+## 06/11
+
+```{r}
+
+colonizers_0611 <- Reduce(intersect, list(colonizers0611_ppp,
+                                          colonizers0611_hdp
+                                          ))
+
+
+
+ASVS <- as.character(unlist(colonizers_0611))
+
+otu <- as.data.frame(be.ps@otu_table)
+
+tot.abundance <- colSums(otu)
+
+otu <- apply(otu, 2, function(x) x / max(x))
+otu <- t(otu)
+
+wheremax <- apply(otu, 1, which.max) # max location of OTU
+otu.order <- order(wheremax)
+otu.ordered <- otu[otu.order,]
+
+
+sub.otu <- as.data.frame(otu.ordered)
+sub.otu$OTU.ID <- rownames(sub.otu)
+
+# Subset and long format
+sub.otu <- sub.otu %>%
+  filter(OTU.ID %in% ASVS) %>%
+  pivot_longer(names_to = "Sample", values_to = "Abundance", cols=-OTU.ID)
+
+ggplot(sub.otu, aes(x = Sample, y = Abundance, color = OTU.ID, group = OTU.ID))+
+  geom_line() +
+  #geom_point() +
+  labs(title = "Normalized abundance across samples", 
+       x = "Sample", y = "Abundance") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_DE/0611.pdf')
+
+```
+
+
+# DeSeq2
+
+```{r}
+
+metadata <- be.ps@sam_data
+
+metadata$collection_date <- as.Date(metadata$collection_date)
+
+metadata$season <- ifelse(format(metadata$collection_date, "%m") %in% c("06", "07", "08"), "Summer", 'Fall')
+
+be.ps@sam_data <- metadata
+
+```
+
+```{r, print = FALSE}
+
+dds.df_season <- phyloseq_to_deseq2(be.ps, ~ season)
+
+dds.s <- DESeq(dds.df_season)
+
+```
+
+```{r}
+
+res <- results(dds.s)
+
+res_df <- as.data.frame(res)
+res_df$taxonomy <- rownames(res_df)
+
+#hist(res_df$pvalue, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+p.threshold <- 0.05
+
+#hist(res_df$log2FoldChange, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+l2fc.threshold <- 0.5
+# if 1, the  abundance is doubled or halved between conditions
+
+res_df$expression <- "No enrichment"
+res_df$expression[res_df$log2FoldChange > l2fc.threshold & res_df$padj < p.threshold] <- "Summer"
+res_df$expression[res_df$log2FoldChange < (-l2fc.threshold) & res_df$padj < p.threshold] <- "Fall"
+
+res_df$labels <- NA
+res_df$labels[res_df$expression != "No enrichment"] <- res_df$taxonomy[res_df$expression != "No enrichment"]
+
+#write.csv(res_df, 'Scripts/Bact.Euk/Res/BE_DE/res_df.csv', row.names = FALSE)
+
+ggplot(res_df, aes(x = log2FoldChange, y = -log10(padj), col=expression, label=labels)) +
+  geom_point() +
+  theme_bw() +
+  geom_vline(xintercept = c(-l2fc.threshold, l2fc.threshold), col = "black", linetype = 'dashed') + # log2FC threshold
+  geom_hline(yintercept = -log10(p.threshold), col = "black", linetype = 'dashed') + # p threshold
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_color_manual(name="Enrichment",values=c("red", 'black',"blue"))+
+  geom_text_repel(show_guide=F)
+
+#ggsave('Scripts/Bact.Euk/Res/BE_DE/summer_vs_fall.pdf', height = 8, width = 20)
+
+```
+

@@ -1,0 +1,440 @@
+---
+title: "WHD_E_PreProcessing"
+output: html_notebook
+---
+
+```{r setup, include = FALSE, print = FALSE}
+
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/Francesca/Documents/INTERNSHIP/") 
+
+```
+
+```{r, echo = FALSE, include = FALSE, print = FALSE}
+
+library(readxl)
+library(dplyr)
+library(purrr)
+library(tidyverse)
+library(reshape2) # melt function
+
+library(ggplot2)
+library(ggfortify)
+library(pals)
+
+# Ecology package
+library(vegan)
+library(phyloseq)
+library(microbiome)
+library(microViz)
+library(fossil)
+
+```
+
+# Import
+
+```{r}
+
+euk_phylo <- readRDS('Scripts/Eukaryotes/Res/E_PreProcessing/euk_phylo.rds')
+bact_phylo <- readRDS('Scripts/Bacteria/Res/B_PreProcessing/bact_phylo.rds')
+
+euk_nfn <- readRDS('Scripts/Eukaryotes/Res/E_PreProcessing/euk_nfn.rds')
+bact_nfn <- readRDS('Scripts/Bacteria/Res/B_PreProcessing/bact_nfn.rds')
+
+#e.agg <- readRDS('Scripts/Eukaryotes/Res/E_SPIEC-EASI/euk_agglomerated.2.rds')
+# normalized, filterd, normalized but og dataframe
+
+```
+
+# Phyloseq
+
+```{r}
+
+# Initial dataframe, containing all OTUs
+
+# euk = 6 862
+# bact = 24 461
+
+ps_phylo <- merge_phyloseq(euk_phylo, bact_phylo)
+
+ps_phylo
+# 31 321
+
+```
+
+```{r}
+
+# Dataframe after 0.01% filtering and normalized
+
+# euk = 109
+# bact= 130
+
+ps <- merge_phyloseq(euk_nfn, bact_nfn)
+
+ps # 239
+
+```
+
+## Rarefaction
+
+```{r, eval = FALSE}
+
+otu <- as.data.frame(ps_phylo@otu_table)
+
+min_read_sample <- min(rowSums(otu))
+#WHD_00070, 7431
+
+#pdf('Scripts/  
+
+rrcurve <- rarecurve(otu, step = 500, label = FALSE, cex = 0.75, las = 1, col = 'blue')
+title('Rarefaction Curve - Bacteria')
+#dev.off()
+
+```
+
+## Environmental Variables
+
+```{r}
+
+metadata <- read_excel('Data/WHD_data_files/WHD_data_files/WHD_MIMARKS_Table/WHD_Bv6_Ev4_2013_Metadata_treatment.xlsx',
+                       na = "NA")
+
+metadata <- as.data.frame(t(metadata))
+
+colnames(metadata) <- c('project_name', 'investigation_type', 'experimental_factor', 'geo_loc_name', 'lat_lon', 'collection_date','biome', 'feature', 'material', 'env_package', 'samp_collect_device', 'samp_size', 'nucl_acid_ext', 'lib_reads_seqd', 'lib_const_meth', 'target_gene', 'target_subfragment', 'seq_meth', 'pcr_primers', 'pcr_cond', 'seq_quality_check', 'sop', 'url', 'depth', 'temp', 'salinity')
+
+rownames(metadata) <- substr(rownames(metadata), 1, 8)
+
+
+metadata$collection_date <- as.Date(as.numeric(metadata$collection_date), origin = "1899-12-30")
+
+metadata$collection_date <- as.factor(metadata$collection_date)
+
+```
+
+```{r}
+
+col.to.keep <- c('temp', 'salinity', 'collection_date', 'material')
+
+md <- metadata[,col.to.keep]
+
+md$temp <- as.numeric(md$temp)
+md$salinity <- as.numeric(md$salinity)
+
+```
+
+```{r}
+
+md.plot <- md %>%
+  pivot_longer(cols = c('salinity', 'temp'),
+               names_to = "Variable",
+               values_to = "Value")
+
+ggplot(md, aes(x = collection_date, y = temp)) + 
+  geom_line(color = "blue", size = 1) +   # Add a blue line for temperature
+  geom_point(color = "red", size = 2) +   # Add red points to the line
+  labs(title = "Temperature Over Collection Dates",
+       x = "Collection Date", 
+       y = "Temperature (°C)") + 
+  theme_minimal()
+
+#ggsave('Scripts/temperature.pdf')
+```
+
+# Graphs
+
+## PCA
+
+Using standard statistical methods on such data may lead to spurious results. Likewise, any data that are compositional in nature are interpreted into relative counts. Hence, using a CLR transformation allows the circumvention of these spurious results 
+
+```{r}
+
+ps_c <- microbiome::transform(ps, "clr")
+
+```
+
+```{r}
+
+otu <- as.data.frame(ps_c@otu_table)
+
+pca <- prcomp(otu)#, scale. = TRUE)
+
+otu$material <- metadata$material
+otu$collection_date <- metadata$collection_date
+
+# Plot the PCA results
+autoplot(pca, data = otu, colour = 'collection_date', shape = 'material', size = 4) +
+  ggtitle('PCA') +
+  scale_color_brewer(palette = 'Set1') +
+  theme(legend.position = 'bottom') +
+  theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_1.PreProcessing/BE_PCA.pdf', height = 7, width = 9)
+
+```
+
+## Compositionality
+
+```{r}
+ 
+# COMPOSITIONALITY
+
+plot_bar(ps, fill = 'phylum') +
+  geom_col(aes(color=domain),stat = "identity", position = "stack") +
+  labs(x = "", y = "Relative Abundance\n") +
+  scale_fill_manual(values=as.vector(polychrome())) +
+  ggtitle('Compositionality')
+
+#ggsave('Scripts/Bact.Euk/Res/BE_1.PreProcessing/BE_compositionality.pdf', width = 50, height = 30, units = "cm")
+
+
+```
+
+```{r}
+
+physeq_subset <- subset_samples(ps, collection_date == "2013-07-17")
+
+# Transform to relative abundances (compositionally)
+physeq_rel <- transform_sample_counts(physeq_subset, function(x) x / sum(x))
+
+
+plot_bar(physeq_rel, x = "Sample", fill = "phylum") +
+  theme_minimal() +
+   geom_col(aes(color=phylum),stat = "identity", position = "stack") +
+  labs(title = "Compositional Bar Plot for Selected Collection Date")
+
+```
+
+## Richness
+
+```{r}
+
+otu <- as.data.frame(ps@otu_table)
+
+# Present/absent matrix
+pres.mat <- otu > 0
+pres.mat <- as.numeric(pres.mat)
+pres.mat <- matrix(pres.mat, nrow = nrow(otu), ncol = ncol(otu),        dimnames = dimnames(otu))
+
+```
+
+```{r, eval = FALSE}
+
+plot_richness(ps_phylo, "material", measures= c('Chao1','Shannon', 'Chao2')) +
+  geom_boxplot() + 
+  facet_wrap(collection_date ~ variable, scale = 'free_y')
+
+# Shannon = abundances and evenness
+
+#ggsave('Scripts/Bact.Euk/Res/BE_1.PreProcessing/be_richness.pdf')
+```
+
+## PCoA
+
+```{r}
+
+# Jaccard
+pcoa <- ordinate(ps, method = "PCoA", distance = "jaccard")
+plot_ordination(ps, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set2') +
+  #xlab('PCo1 [15%]') +
+  #ylab('PCo2 [13.3%]') +
+  ggtitle('Principal Coordinate Analysis (ps) - Jaccard')
+
+#ggsave('Scripts/Bact.Euk/Res/BE_1.PreProcessing/BE.ps_PCoA_jcrd.pdf')
+
+# Bray - Curtis
+pcoa <- ordinate(ps, method = "PCoA", distance = "bray")
+plot_ordination(ps, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 4) +
+  scale_color_brewer(palette='Set1') +
+  xlab('PCo1 [21.6%]') +
+  ylab('PCo2 [17.6%]') +
+  ggtitle('PCoA - Bray-Curtis') +
+  theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_1.PreProcessing/BE.ps_PCoA_bray.pdf', height = 7, width = 9)
+
+
+# Horn 
+pcoa <- ordinate(ps, method = "PCoA", distance = "horn")
+plot_ordination(ps, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 4) +
+  scale_color_brewer(palette='Set1') +
+  xlab('PCo1 [34.3%]') +
+  ylab('PCo2 [19%]') +
+  ggtitle('PCoA - Horn-Morisita') +
+  theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_1.PreProcessing/BE.ps_PCoA_horn.pdf', height = 7, width = 9)
+
+# Morisita
+pcoa <- ordinate(ps, method = "PCoA", distance = "morisita")
+plot_ordination(ps, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set2') +
+  #xlab('PCo1 [3.7%]') +
+  #ylab('PCo2 [3.6%]') +
+  ggtitle('PCoA - Morisita')
+
+#ggsave('Scripts/Bact.Euk/Res/BE_1.PreProcessing/BE.ps_PCoA_morisita.pdf')
+
+```
+
+### Not normalized
+
+```{r}
+
+# Jaccard
+pcoa <- ordinate(ps_phylo, method = "PCoA", distance = "jaccard")
+plot_ordination(ps_phylo, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCo1 [15%]') +
+  #ylab('PCo2 [13.3%]') +
+  ggtitle('Principal Coordinate Analysis (ps_phylo) - Jaccard')
+
+#ggsave('Scripts/Bact.Euk/Res/BE_1.PreProcessing/BE.ps_PCoA_jcrd_NOTnorm.pdf', height = 7, width = 9)
+
+# Bray - Curtis
+pcoa <- ordinate(ps_phylo, method = "PCoA", distance = "bray")
+plot_ordination(ps_phylo, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCo1 [16.8%]') +
+  #ylab('PCo2 [14.5%]') +
+  ggtitle('Principal Coordinate Analysis (ps_phylo) - Bray-Curtis')
+
+#ggsave('Scripts/Bact.Euk/Res/BE_1.PreProcessing/BE.ps_PCoA_bray_NOTnorm.pdf', height = 7, width = 9)
+
+
+# Horn 
+pcoa <- ordinate(ps_phylo, method = "PCoA", distance = "horn")
+plot_ordination(ps_phylo, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCo1 [29.6%]') +
+  #ylab('PCo2 [26%]') +
+  ggtitle('Principal Coordinate Analysis (ps_phylo) - Horn-Morisita')
+
+#ggsave('Scripts/Bact.Euk/Res/BE_1.PreProcessing/BE.ps_PCoA_horn_NOTnorm.pdf', height = 7, width = 9)
+
+# Morisita
+pcoa <- ordinate(ps_phylo, method = "PCoA", distance = "morisita")
+plot_ordination(ps_phylo, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCo1 [19.6%]') +
+  #ylab('PCo2 [29.6%]') +
+  ggtitle('Principal Coordinate Analysis (ps_phylo) - Morisita')
+
+#ggsave('Scripts/Bact.Euk/Res/BE_1.PreProcessing/BE.ps_PCoA_horn_NOTnorm.pdf', height = 7, width = 9)
+
+```
+
+## NMDS
+
+```{r}
+
+# Jaccard
+nmds <- ordinate(ps, method = "NMDS", distance = "jaccard")
+saveRDS(nmds, 'Scripts/Bact.Euk/Res/BE_1.PreProcessing/NMDS_stress/BE_nmds_jcrd')
+plot_ordination(ps, nmds, color="collection_date", shape = 'material') +
+  geom_point(size = 4) +
+  scale_color_brewer(palette='Set1') +
+  ggtitle('NMDS - Jaccard')+
+   theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_1.PreProcessing/BE.ps_NMDS_jcrd.pdf')
+
+
+# Horn
+nmds <- ordinate(ps, method = "NMDS", distance = "horn")
+saveRDS(nmds, 'Scripts/Bact.Euk/Res/BE_1.PreProcessing/NMDS_stress/BE_nmds_horn')
+plot_ordination(ps, nmds, color="collection_date", shape = 'material') +
+  geom_point(size = 4) +
+  scale_color_brewer(palette='Set1') +
+  ggtitle('NMDS - Horn')+
+   theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_1.PreProcessing/BE.ps_NMDS_horn.pdf')
+
+
+# Bray-Curtis
+nmds <- ordinate(ps, method = "NMDS", distance = "bray", k = 3)
+saveRDS(nmds, 'Scripts/Bact.Euk/Res/BE_1.PreProcessing/NMDS_stress/BE_nmds_bray')
+plot_ordination(ps, nmds, color="collection_date", shape = 'material') +
+  geom_point(size = 4) +
+  scale_color_brewer(palette='Set1') +
+  labs(title = 'Bacteria + Eukaryotes',
+       subtitle = 'NMDS - Bray-Curtis') +
+   theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_1.PreProcessing/BE.ps_NMDS_bray.pdf',height = 7, width = 9)
+
+
+# Morisita
+nmds <- ordinate(ps, method = "NMDS", distance = "morisita")
+saveRDS(nmds, 'Scripts/Bact.Euk/Res/BE_1.PreProcessing/NMDS_stress/BE_nmds_morisita')
+plot_ordination(ps, nmds, color="collection_date", shape = 'material') +
+  geom_point(size = 4) +
+  scale_color_brewer(palette='Set1') +
+  ggtitle('NMDS - Morisita') +
+   theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_1.PreProcessing/BE.ps_NMDS_morisita.pdf')
+```
+
+```{r}
+
+dissimilarity_matrix <- distance(ps, method = "bray")
+nmds_result <- metaMDS(dissimilarity_matrix, k = 3, trymax = 100)
+
+nmds_scores <- as.data.frame(scores(nmds_result))
+nmds_scores$Sample <- rownames(nmds_scores)  # Add sample names
+
+sample_data_df <- as.data.frame(ps@sam_data)
+
+# Merge NMDS scores with sample metadata
+nmds_scores <- merge(nmds_scores, sample_data_df, by.x = "Sample", by.y = "row.names")
+
+
+# Create a 3D NMDS plot
+plot_ly(data = nmds_scores, 
+        x = ~NMDS1, 
+        y = ~NMDS2, 
+        z = ~NMDS3, 
+        text = ~Sample, 
+        color = ~collection_date,  # Color by collection_date
+              symbol = ~material,        # Shape by material
+              colors = "Set1",           # Choose a color palette
+              type = 'scatter3d', 
+              mode = 'markers', 
+              marker = list(size = 5)) %>%
+  layout(title = "3D NMDS Plot",
+         scene = list(
+           xaxis = list(title = "NMDS1"),
+           yaxis = list(title = "NMDS2"),
+           zaxis = list(title = "NMDS3")
+         ))
+
+html_file <- "3D_NMDS_Plot.html"
+saveWidget(p, html_file, selfcontained = TRUE)
+
+# Use webshot to take a screenshot of the HTML plot and save it as an image
+image_file <- "3D_NMDS_Plot.png"
+webshot(html_file, file = image_file, vwidth = 800, vheight = 600)
+
+
+```
+
+# Saves
+
+```{r}
+
+# PHYLOSEQ OBJECTS
+saveRDS(ps, 'Scripts/Bact.Euk/Res/BE_1.PreProcessing/be_nfn.rds')
+saveRDS(ps_phylo,'Scripts/Bact.Euk/Res/BE_1.PreProcessing/be_phylo.rds')
+
+```

@@ -1,0 +1,548 @@
+---
+title: "WHD_B_SpiecEasi"
+output: html_notebook
+---
+
+```{r setup, include = FALSE, print = FALSE}
+
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/Francesca/Documents/INTERNSHIP/") 
+
+```
+
+```{r, echo = FALSE, include = FALSE, print = FALSE}
+
+library(readxl)
+library(dplyr)
+library(purrr)
+library(tidyverse)
+library(reshape2) # melt function
+library(pheatmap)
+
+library(RColorBrewer)
+
+library(ggplot2)
+library(ggfortify)
+
+# Ecology package
+library(vegan)
+library(phyloseq)
+library(microbiome)
+
+# SPIEC-EASI
+library(SpiecEasi)
+library(igraph)
+library(Matrix)
+
+```
+
+
+```{r}
+
+# Pre Processing
+bact_phylo <- readRDS('Scripts/Bacteria/Res/B_PreProcessing/bact_phylo.rds')
+
+# aIDA
+bact.ps <- readRDS('Scripts/phyloseq.objects/bact.ps.rds')
+
+```
+
+
+```{r}
+
+# RELATIVE ABUNDANCES
+bact.rel <- transform_sample_counts(bact.ps, function(x) x / sum(x))
+bact.otu.rel <- as.data.frame(bact.rel@otu_table)
+
+```
+
+
+# Taxa color
+
+```{r}
+
+# Colors per phylum
+taxa.table <- tax_table(bact.ps)
+
+phyla <- as.character(taxa.table[, "phylum"])
+unique.phyla <- unique(phyla) # list of phylum
+# "Pseudomonadota"    "Cyanobacteriota"   "Actinomycetota"    "Rhodothermota"     "Bacteroidota"   "Lentisphaerota"    "Bacillota"         "Verrucomicrobiota" "Acidobacteriota"  
+
+custom_colors <- c('maroon', #Pseudomonadota
+                   "forestgreen", #Cyanobacteria
+                   "#A0D655", #Actinobacteria
+                   'orange', #Rhodothermota
+                   "#FF78E5", #Bacteriodota
+                   'blue', #Lentisphaerota
+                   'skyblue', #Bacillota
+                   'purple',# Verrucomicrobiota
+                   '#9C7250') #Acidobacteriodota
+
+phylum.color <- setNames(custom_colors, unique.phyla)
+
+
+```
+
+# Analysis
+
+```{r}
+
+bact.spieceasi <- readRDS('Scripts/Bacteria/Res/B_SPIEC-EASI/B.names_spieceasi.rds')
+
+bact <- bact.ps # PHYLOSEQ OBJECT
+otu <- as.data.frame(otu_table(bact))
+
+otu
+
+```
+## Adj Matrix
+
+```{r}
+
+set.seed(2121)
+
+# getRefit = the optimal (StARS-refit) network
+adj.mat <- as.matrix(getRefit(bact.spieceasi)) # Presence/absence
+colnames(adj.mat) <- row.names(adj.mat) <- colnames(otu)
+
+# FULL GRAPH ####
+# igraph object
+bact.gl <- adj2igraph(adj.mat)
+V(bact.gl)$name <- colnames(adj.mat)
+
+vsize <- rowMeans(clr(otu),1)+6 # Vertex
+
+# Colors
+taxa.table <- tax_table(bact)
+phyla <- as.character(taxa.table[, "phylum"])
+vertex.colors <- sapply(phyla, function(x) phylum.color[x])
+
+
+LO = layout.fruchterman.reingold(bact.gl)
+
+#pdf('Scripts/Bacteria/Res/B_SPIEC-EASI/B_circle.pdf', height = 15, width = 15)
+plot(bact.gl, 
+     layout = LO, 
+     vertex.size = vsize, 
+     vertex.color = vertex.colors,
+     main=" SpiecEasi Bacteria- Glasso")
+#dev.off()
+
+```
+
+```{r}
+
+# Remove isolated nodes
+
+set.seed(2121)
+
+isolated <- V(bact.gl)[degree(bact.gl) == 0]
+G2 <- delete.vertices(bact.gl, isolated)
+LO2 <- layout.fruchterman.reingold(G2)
+
+# Vertex color matched
+vertex.G2 <- V(G2)$name
+vertex.colors.G2 <- vertex.colors[match(vertex.G2, V(bact.gl)$name)]
+
+#pdf('Scripts/Bacteria/Res/B_SPIEC-EASI/B_circle.isolated.pdf', height = 40, width = 40)
+plot(G2, 
+     layout = LO2, 
+     vertex.size = vsize*2, 
+     vertex.color = vertex.colors.G2,
+     main=" SpiecEasi Bacteria- Glasso")
+#dev.off()
+
+```
+
+##Weighted Adj Matrix
+
+```{r}
+
+# Weighted network
+# Weighted network
+cov.mat <- as.matrix(getOptCov(bact.spieceasi)) # COVARIANCE MATRIX
+colnames(cov.mat)<- row.names(cov.mat) <- colnames(otu)
+
+se.cor <- cov2cor(cov.mat) # CORRELATION MATRIX
+weighted.adj.mat <- se.cor*adj.mat
+weighted.adj.mat <- round(as.matrix(se.cor*adj.mat),5)
+
+# Removing rows and columns with 0
+r <- apply(weighted.adj.mat, 1, function(row) any(row != 0))
+c <- apply(weighted.adj.mat, 2, function(col) any(col != 0))
+
+w.adj.mat <- weighted.adj.mat[r, c]
+
+
+ get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+
+lower_tri <- get_upper_tri(w.adj.mat)
+
+melted_cormat <- melt(lower_tri, na.rm = TRUE)
+
+# Heatmap
+
+ggplot(data = melted_cormat, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(
+    low = "blue", high = "red", mid = "lightgrey",
+    midpoint = 0, limit = c(-0.1, 0.1), space = "Lab",
+    name = "SE value"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 1, size = 12, hjust = 1),
+    axis.text.y = element_text(size = 12)
+  ) +
+  scale_y_discrete(position = "right") +            # Move y-axis labels to the right
+  coord_fixed() +
+  labs(x = "Variable 1", y = "Variable 2") + # Rename axes
+  geom_text(aes(label = ifelse(value != 0, round(value, 2), "")), size = 3)
+
+ggsave('Scripts/Bacteria/Res/B_SPIEC-EASI/B_heatmap.pdf',height =20, width =20)
+
+
+```
+
+```{r}
+
+grph <- adj2igraph(weighted.adj.mat)
+
+# Node list
+V(grph)$name <- colnames(otu)
+V(grph)$size <- (degree(grph) + 1) # the +1 is to avoid size zero vertices
+V(grph)$color <- "#D3D3D3"
+
+#Edges = values in the weighted.adj.mat
+E(grph)$color <- 'green' # POSITIVE
+E(grph)$color[E(grph)$weight<0] <- 'red'#NEGATIVE
+E(grph)$width <- abs(E(grph)$weight)*10
+
+
+#pdf('Scripts/Bacteria/Res/B_SPIEC-EASI/B.names_circleInteractions.pdf', height = 15, width = 15)
+plot(grph,
+     vertex.label.cex=0.5,
+     vertex.label.color="black",
+     vertex.color = vertex.colors,
+     layout=layout.circle(grph))
+#dev.off()
+
+```
+
+```{r}
+
+# Remove isolated nodes
+set.seed(2121)
+
+isolated <- V(grph)[degree(grph) == 0]
+G2 <- delete.vertices(grph, isolated)
+
+#LO2 <- layout.fruchterman.reingold(G2)
+
+vertex.G2 <- V(G2)$name
+vertex.colors.G2 <- vertex.colors[match(vertex.G2, V(grph)$name)]
+
+
+pdf('Scripts/Bacteria/Res/B_SPIEC-EASI/B_circle.isolated.weighted.pdf', height = 43, width = 43)
+plot(G2, 
+     #vertex.shape = 'square',
+     #layout = LO2, 
+     
+    vertex.size = vsize*2.4,
+     vertex.color = vertex.colors.G2,
+     
+     vertex.label.cex = 1.7,
+     vertex.label.family = 'sans',
+     vertex.label.color = 'black',
+     
+     
+     edge.width = E(G2)$width*20,
+     main=" SpiecEasi Bacteria- Glasso")
+
+
+legend("bottomleft", 
+       legend = unique.phyla, 
+       fill = phylum.color, 
+       title = "Phylum",
+       cex = 3)  # Adjust size of legend text
+
+dev.off()
+
+
+```
+
+
+### Edges
+
+```{r}
+
+df <- as_data_frame(G2, what = 'both')
+edg <- df$edges
+
+edg <- edg %>%
+  select(-color, -width) %>%
+  mutate(quantile = ntile(weight, 4))
+
+write.table(edg, file = 'Scripts/Bacteria/Res/B_SPIEC-EASI/B_edges.tsv', sep = "\t")
+
+```
+
+
+```{r, eval = F}
+
+# Lower quantile
+b.q1 <- edg %>%
+  subset(quantile == 1)
+
+b.q1_vertices <- unique(c(b.q1$from, b.q1$to))
+b.q1.grph <- subgraph(grph, b.q1_vertices)
+
+E(b.q1.grph)$color <- 'green' # POSITIVE
+E(b.q1.grph)$color[E(b.q1.grph)$weight<0] <- 'red'#NEGATIVE
+
+plot(b.q1.grph)
+
+plot(b.q1.grph,
+     vertex.label.cex=0.5,
+     vertex.label.color="black",
+     layout=layout.circle(b.q1.grph))
+
+asvs <- unique(c(b.q1$from, b.q1$to)) # 19
+b.f_temp <- otu_table(b.f)[,asvs]
+b.f_temp <- merge_phyloseq(b.f_temp, tax_table(b.f), sample_data(b.f))
+b.f_n <- transform_sample_counts(b.f_temp, function(x) x / sum(x))
+
+plot_bar(b.f_n, fill = 'phylum') +
+  geom_bar(aes(fill = phylum), stat = "identity", position = "stack") +
+  labs(x = "", y = "Relative Abundance\n") +
+  ggtitle('Eukaryotes community compostion')
+
+```
+
+```{r, eval = F}
+
+# Upper quantile
+b.q4 <- edg %>%
+  subset(quantile == 4)
+
+b.q4_vertices <- unique(c(b.q4$from, b.q4$to))
+b.q4.grph <- subgraph(grph, b.q4_vertices)
+
+E(b.q4.grph)$color <- 'green' # POSITIVE
+E(b.q4.grph)$color[E(b.q4.grph)$weight<0] <- 'red'#NEGATIVE
+
+plot(b.q4.grph)
+
+plot(b.q4.grph,
+     vertex.label.cex=0.5,
+     vertex.label.color="black",
+     layout=layout.circle(b.q4.grph))
+
+asvs <- unique(c(b.q4$from, b.q4$to)) # 16
+b.f_temp <- otu_table(b.f)[,asvs]
+b.f_temp <- merge_phyloseq(b.f_temp, tax_table(b.f), sample_data(b.f))
+b.f_n <- transform_sample_counts(b.f_temp, function(x) x / sum(x))
+
+plot_bar(b.f_n, fill = 'phylum') +
+  geom_bar(aes(fill = phylum), stat = "identity", position = "stack") +
+  labs(x = "", y = "Relative Abundance\n") +
+  ggtitle('Eukaryotes community compostion')
+
+```
+
+```{r}
+
+# Working with only the upper and lower quantile, stronger interactions
+b <- edg %>%
+  subset(quantile == c(1,4))
+# 41
+
+b_vertices <- unique(c(b$from, b$to))
+b.grph <- subgraph(grph, b_vertices)
+
+E(b.grph)$color <- 'green' # POSITIVE
+E(b.grph)$color[E(b.grph)$weight<0] <- 'red'#NEGATIVE
+
+#pdf('Scripts/Bacteria/Res/B_SPIEC-EASI/B.names.low.up.q_interactions.pdf', height = 15, width = 15)
+plot(b.grph)
+#dev.off()
+
+#pdf('Scripts/Bacteria/Res/B_SPIEC-EASI/B.names.low.up.q_circleInteractions.pdf', height = 15, width = 15)
+plot(b.grph,
+     vertex.label.cex=0.5,
+     vertex.label.color="black",
+     layout=layout.circle(b.q4.grph))
+#dev.off()
+
+```
+
+```{r}
+
+asvs <- unique(c(b$from, b$to)) # 16
+b.f_temp <- otu_table(b.f)[,asvs]
+b.f_temp <- merge_phyloseq(b.f_temp, tax_table(b.f), sample_data(b.f))
+b.f_n <- transform_sample_counts(b.f_temp, function(x) x / sum(x))
+
+plot_bar(b.f_n, fill = 'phylum') +
+  geom_bar(aes(fill = phylum), stat = "identity", position = "stack") +
+  labs(x = "", y = "Relative Abundance\n") +
+  ggtitle('Eukaryotes community compostion')
+
+```
+
+### Clustering
+
+```{r}
+
+fviz_nbclust(cov.mat, kmeans, method = "silhouette")
+# 2
+
+k <- kmeans(cov.mat, centers = 10)
+fviz_cluster(k, cov.mat)
+
+```
+
+```{r}
+
+obj.names <- rownames(cov.mat)  # Extract object names
+
+res.df <- data.frame(object = obj.names, 
+                     cluster = k$cluster)
+
+clust <- split(obj.names, k$cluster)
+
+```
+
+## Covariance Matrix Interactions
+
+```{r}
+
+secorBact  <- cov2cor(cov.mat)
+
+bact.spieceasi.gl <- triu(secorBact*adj.mat, k=1)
+melted_SE <- melt(as.matrix(bact.spieceasi.gl))
+colnames(melted_SE) <- c('Var1', 'Var2', 'Value.SE')
+
+melted_SE.no0 <- melted_SE[melted_SE$Value.SE != 0, ]
+
+melted_SE # 27 889
+melted_SE.no0 # 705 interactions
+```
+
+```{r}
+
+ggplot(melted_SE.no0, aes(Value.SE)) +
+  geom_histogram(binwidth = 0.01, fill = "blue", color = "black") +
+  labs(title = "Histogram of SE - Bacteria", x = "SE value", y = "Frequency") +
+  theme_minimal()
+
+#ggsave('Scripts/Bacteria/Res/B_SPIEC-EASI/B_histogram.pdf')
+
+```
+
+## SE and aIDA comparison
+
+BE SURE TO USE THE SAME AMOUNT OF DATA!
+
+```{r}
+
+melted_SE.opposite.no0 <- melted_SE.no0
+colnames(melted_SE.opposite.no0) <- c('Var2', 'Var1', 'Value.SE')
+melted_SE.no0 <- rbind(melted_SE.no0, melted_SE.opposite.no0)
+
+merged_df.no0 <- full_join(melted_aIDA, melted_SE.no0, by = c('Var1', 'Var2'))
+
+merged_df.no0 # 19 602
+
+
+```
+
+```{r}
+
+merged_df <- merged_df.no0
+
+# Based on aIDA values!
+merged_df <- merged_df %>%
+  mutate(Presence = ifelse(is.na(Value.SE), "NO SE", "SE"))
+
+ggplot(merged_df, aes(x = Presence)) +
+  geom_histogram(stat = "count", fill = "skyblue", color = "black") +
+  labs(title = 'aIDA and SE - Bacteria',
+       x = "Presence",
+       y = "Count") +
+  theme_minimal()
+
+```
+
+```{r}
+
+ggplot(merged_df, aes(x = Presence, y = Value.aIDA)) +
+  geom_violin(trim = FALSE) +
+  stat_summary(fun.data=mean_sdl, geom="pointrange") +
+  labs(title = "Violin Plot of Value.aIDA by Presence",
+       x = "Presence",
+       y = "Value.aIDA") +
+  theme_minimal()
+
+#ggsave('Scripts/Bacteria/Res/B_SPIEC-EASI/B_violin.pdf')
+```
+
+```{r}
+
+df.SE <- merged_df[merged_df$Presence == "SE", ]
+
+ggplot(df.SE, aes(Value.SE, Value.aIDA)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE) +
+  ggtitle('SE present')
+
+#ggsave('Scripts/Bacteria/Res/B_SPIEC-EASI/B_lm.pdf')
+```
+
+```{r}
+
+# most SE values are absent
+ggplot(merged_df, aes(x = Value.aIDA, color = "Value.aIDA")) +
+  geom_density() +
+  geom_density(aes(x = Value.SE, color = "ValueSE")) +
+  labs(title = "Density Plot of Value.aIDA and ValueSE",
+       x = "Value",
+       y = "Density") +
+  theme_minimal()
+
+#ggsave('Scripts/Bacteria/Res/B_SPIEC-EASI/B_density_aIDA.SEandNO.SE.pdf')
+
+# SE + aIDA
+ggplot(df.SE, aes(x = Value.aIDA, color = "Value.aIDA")) +
+  geom_density() +
+  geom_density(aes(x = Value.SE, color = "Value.SE")) +
+  labs(title = "Density Plot of Value.aIDA and ValueSE (Both present)",
+       x = "Value",
+       y = "Density") +
+  theme_minimal()
+
+#ggsave('Scripts/Bacteria/Res/B_SPIEC-EASI/B_density_aIDA.SE.pdf')
+
+
+```
+
+# ALGORITHM
+
+```{r, eval = FALSE}
+
+set.seed(2112)
+
+bact.spieceasi <- spiec.easi(bact.ps, 
+                             method='glasso', 
+                             lambda.min.ratio=1e-2,
+                             nlambda=20, 
+                             pulsar.params=list(rep.num=50))
+
+saveRDS(bact.spieceasi, 'Scripts/Bacteria/Res/B_SPIEC-EASI/B.names_spieceasi.rds')
+
+```
+
+

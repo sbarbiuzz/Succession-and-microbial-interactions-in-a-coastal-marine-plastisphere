@@ -1,0 +1,1041 @@
+---
+title: "WHD_E_aIDA"
+output: html_notebook
+---
+
+```{r setup, include = FALSE, print = FALSE}
+
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/Francesca/Documents/INTERNSHIP/") 
+
+```
+
+```{r, echo = FALSE, include = FALSE, print = FALSE}
+
+library(readxl)
+library(dplyr)
+library(purrr)
+library(tidyverse)
+library(reshape2) # melt function
+
+library(ggplot2)
+library(ggfortify)
+library(RColorBrewer)
+
+library(SpiecEasi)
+
+# Ecology package
+library(vegan)
+library(phyloseq)
+library(microbiome)
+
+# aIDA
+library(pcalg)
+library(Rgraphviz)
+library(graph)
+library(ComplexHeatmap)
+library(DESeq2)
+library(igraph)
+
+# Clustering
+library(cluster)
+library(factoextra) 
+
+```
+
+
+
+```{r}
+
+euk_phylo <- readRDS('Scripts/Eukaryotes/Res/E_PreProcessing/euk_phylo.rds')
+#euk_nf <- readRDS('Scripts/Eukaryotes/Res/E_PreProcessing/euk_nf.rds')
+
+e.agg <- readRDS('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_agglomerated.ps.rds')
+
+de.ds <- read.csv('Scripts/Bact.Euk/Res/BE_DE/res_df.csv')
+
+```
+
+
+# Taxa Names
+
+```{r, eval = F}
+
+# Before agglomeration
+
+euk_nfa <- filter_taxa(euk_nf, function(x) sum(x > 0) >= (0.3 * length(x)), TRUE)
+# 68 
+
+# Maintain only filtered taxonomies
+kept_otu.e <- colnames(euk_nfa@otu_table)
+
+e.f <- otu_table(euk_phylo)[,kept_otu.e]
+e.f <- merge_phyloseq(e.f, tax_table(euk_phylo), sample_data(euk_phylo))
+
+e.f # 68
+
+# This is the fed to SE
+
+```
+
+
+```{r, eval = FALSE}
+
+taxonomies <- tax_table(e.f)
+
+#all(!is.na(taxonomies$species)) # TRUE
+# Every taxonomies for eukaryotes reach the SPECIES level
+
+mapping <- as.data.frame(taxonomies[, "species"])
+mapping$ASV <- rownames(mapping)
+
+to.fix <- mapping[grep("_sp\\.$", mapping$species), ] # 26
+to.fix$species <- gsub("\\.", "", to.fix$species)
+
+mapping <- mapping[-grep("_sp\\.$", mapping$species), ] # 32
+mapping$species <- paste0('S.', mapping$species)
+
+### TO.FIX! ####
+
+# Genus 
+names <- c("Cymbella_sp", "Ephelota_sp", "Stentor_sp", 'Hyalodiscus_sp', 
+           'Gonostomum_sp', 'Ulkenia_sp', 'Bicosoeca_sp')
+fixing <- to.fix %>%
+  filter(species %in% names) # 7
+fixing$species <- paste0('G.', fixing$species)
+fixing$species <- sub("_sp$", '', fixing$species)
+
+mapping <- rbind(mapping, fixing)
+to.fix <- to.fix %>%
+  filter(!species %in% names) # 19
+fixing <- NULL
+
+# Order
+names <- c("Corallinales_XX_sp", "Pterocystida_XXX_sp", "Sessilida_X_sp")
+fixing <- to.fix %>%
+  filter(species %in% names) # 5
+fixing$species <- paste0('O.', fixing$species)
+fixing$species <- sub("_X_sp$", '', fixing$species)
+fixing$species <- sub("_XX_sp$", '', fixing$species)
+fixing$species <- sub("_XXX_sp$", '', fixing$species)
+
+mapping <- rbind(mapping, fixing)
+to.fix <- to.fix %>%
+  filter(!species %in% names) # 14
+fixing <- NULL
+
+# Subclass 
+fixing <- to.fix[grep('_XX_sp$', to.fix$species),] # 7
+fixing$species <- paste0('SubC.', fixing$species)
+fixing$species <- sub("_XX_sp$", '', fixing$species)
+
+
+mapping <- rbind(mapping, fixing) # 51
+to.fix <- to.fix[-grep("_XX_sp$", to.fix$species), ] # 7
+fixing <- NULL
+
+# Class
+names <- c("Phaeophyceae_XXX_sp", "Maxillopoda_X_sp", "Peronosporomycetes_XXX_sp")
+fixing <- to.fix %>%
+  filter(species %in% names) # 3
+fixing$species <- paste0('C.', fixing$species) #53
+fixing$species <- sub("_X_sp$", '', fixing$species)
+fixing$species <- sub("_XXX_sp$", '', fixing$species)
+
+mapping <- rbind(mapping, fixing)
+to.fix <- to.fix %>%
+  filter(!species %in% names) # 14
+fixing <- NULL
+
+# Family
+names <- c("Vaginicolidae_X_sp")
+fixing <- to.fix %>%
+  filter(species %in% names) # 2
+fixing$species <- paste0('F.', fixing$species)
+fixing$species <- sub("_X_sp$", '', fixing$species)
+
+mapping <- rbind(mapping, fixing) # 56
+to.fix <- to.fix %>%
+  filter(!species %in% names) # 2
+fixing <- NULL
+
+# Undefined
+fixing <- to.fix
+fixing$species <- 'O.Cryptofilida'
+mapping <- rbind(mapping, fixing)
+
+# Extract the number from each asv 
+mapping$n <- sub(".*\\.([0-9]+)$", "\\1", mapping$ASV)
+mapping$species <- paste0(mapping$species, '.', mapping$n)
+mapping <- mapping %>%
+  select(-n)
+
+otu <- e.f@otu_table
+
+otu.t <- as.data.frame(t(otu))
+otu.t$ASV <- rownames(otu.t)
+
+otu.map <- merge(otu.t, mapping, by = 'ASV', sort = FALSE)
+
+rownames(otu.map) <- otu.map$species
+
+otu.map <- otu.map %>%
+  select(-species, -ASV)
+
+euk.otu <- as.data.frame(t(otu.map))
+
+euk.otu
+
+```
+
+```{r, eval = F}
+
+taxonomies <- tax_table(e.f)
+rownames(taxonomies) <- colnames(euk.otu)
+
+euk.ps <- phyloseq(otu_table(euk.otu, taxa_are_rows = F),
+                   tax_table(taxonomies),
+                   sample_data(euk_phylo))
+
+saveRDS(euk.ps, 'Scripts/phyloseq.objects/euk.ps_no.agglomeration.rds')
+
+# RELATIVE ABUNDANCES 
+euk.rel <- transform_sample_counts(euk.ps, function(x) x / sum(x))
+euk.otu.rel <- as.data.frame(euk.rel@otu_table)
+
+```
+
+
+# Taxa color
+
+```{r}
+
+# Colors per phylum
+# taxa.table <- tax_table(e.f)
+taxa.table <- tax_table(e.agg)
+
+phyla <- as.character(taxa.table[, "phylum"])
+unique.phyla <- unique(phyla) # list of phylum
+# metazoa, gyrista rhodophyta ciliophora cercozoa centroplasthelida choanoflagellata bigyra
+
+custom_colors <- c("#2e5158", # Metazoa
+                   "#6095eb", # Gyrista
+                   "#e69477", # Rhodophyta
+                   '#16fbfa', # Ciliophora
+                   "#fe00e0", #Cercozoa
+                   "#fc1a0f", # Centroplasthelida
+                   '#f5e50d', # Choanoflagellata
+                   '#1c8b16') # Bigyra
+
+phylum.color <- setNames(custom_colors, unique.phyla)
+
+
+```
+
+```{r}
+
+enrichment.color <- c('Summer' = '#d46e6e',
+                      'Fall' = '#7a88c2',
+                      'No enrichment' = 'lightgrey')
+
+
+```
+
+# Before Agglomeration
+
+```{r}
+
+# Variance Stabilization
+
+e.otu <- data.frame(euk.otu)
+
+e.vst <- varianceStabilizingTransformation(as.matrix(e.otu+1), fitType='local')
+
+plot(e.vst[,15])
+plot(log(1+e.otu[,15]))
+
+```
+
+
+```{r}
+
+resMat <- read.table('Scripts/Eukaryotes/Res/E_aIDA/E_resMat.5_no.agglomeration.tsv', header = TRUE, sep = '\t')
+
+resMat <- as.matrix(resMat)
+diag(resMat) <- 0
+# Col = Effects
+# Row = Causes
+
+write.table(resMat, file = 'Scripts/Eukaryotes/Res/E_aIDA/E_resMat.5_no.agglomeration.tsv', sep = "\t", dec = '.')
+
+
+```
+
+```{r}
+
+melted_aIDA <- melt(resMat) # 4624
+colnames(melted_aIDA) <- c('Cause', 'Effect', 'Value.aIDA')
+
+melted_aIDA <- melted_aIDA %>%
+  filter(Cause != Effect) # no self interactions (remove 0)
+# 4556
+  
+```
+
+```{r}
+
+ggplot(melted_aIDA, aes(Value.aIDA)) +
+  geom_histogram(binwidth = 0.1, fill = "blue", color = "black") +
+  labs(title = "aIDA Histogram - Eukaryotes", x = "Value", y = "Frequency") +
+  theme_minimal()
+
+#ggsave('Scripts/Eukaryotes/Res/E_aIDA/E_histogram.vst.pdf')
+
+```
+
+### Clustering
+
+#### Causes (ROWS)
+
+```{r}
+
+set.seed(1234)
+
+# Clustering of ROWS
+
+#pdf('Scripts/Eukaryotes/Res/E_aIDA/E_cluster.silhoutte.rows.pdf', 10, 5)
+fviz_nbclust(resMat, kmeans, method = "silhouette") # 2
+#dev.off()
+
+k <- kmeans(resMat, centers = 2)
+#pdf('Scripts/Eukaryotes/Res/E_aIDA/E_cluster.rows.pdf')
+fviz_cluster(k, resMat)
+#dev.off()
+
+```
+
+```{r}
+
+res.df <- data.frame(OTU = names(k$cluster), 
+                     cluster = k$cluster)
+
+otu.c <- as.data.frame(t(euk.otu.rel))
+otu.c$OTU <- rownames(otu.c)
+otu.c <- merge(otu.c, res.df)
+otu.c$cluster <- as.factor(otu.c$cluster)
+
+otu_long <- otu.c %>%
+  pivot_longer(cols = -c(cluster, OTU), 
+               names_to = "sample", 
+               values_to = "count") %>%
+  mutate(log_count = - log10(count + 1e-6))
+ 
+otu_summary <- otu_long %>%
+  group_by(sample, cluster) %>%
+  summarise(log_mean_count = mean(log_count),
+            mean_count = mean(count))
+
+
+ggplot(otu_summary, aes(x = sample, y = log_mean_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = "Log10 Mean Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ggplot(otu_summary, aes(x = sample, y = mean_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = 'Mean Count') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+#### Effect (COLS)
+
+```{r}
+
+set.seed(1234)
+
+# Clustering of ROWS
+fviz_nbclust(t(resMat), kmeans, method = "silhouette") # 2
+
+k <- kmeans(resMat, centers = 2)
+fviz_cluster(k, t(resMat))
+
+```
+
+```{r}
+
+res.df <- data.frame(OTU = names(k$cluster), 
+                     cluster = k$cluster)
+
+otu.c <- as.data.frame(t(euk.otu.rel))
+otu.c$OTU <- rownames(otu.c)
+otu.c <- merge(otu.c, res.df)
+otu.c$cluster <- as.factor(otu.c$cluster)
+
+otu_long <- otu.c %>%
+  pivot_longer(cols = -c(cluster, OTU), 
+               names_to = "sample", 
+               values_to = "count") %>%
+  mutate(log_count = - log10(count + 1e-6))
+ 
+otu_summary <- otu_long %>%
+  group_by(sample, cluster) %>%
+  summarise(log_mean_count = mean(log_count),
+            mean_count = mean(count))
+
+
+ggplot(otu_summary, aes(x = sample, y = log_mean_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = "Log10 Mean Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+ggplot(otu_summary, aes(x = sample, y = mean_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = 'Mean Count') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+
+### Network Skeleton
+
+```{r}
+
+set.seed(123)
+
+otu <- e.vst
+
+# form pcalg vignettes
+
+V <- colnames(otu) # asv names from vst
+
+suffStat <- list(C = cor(otu), n = nrow(otu))
+
+# Estimate initial skeleton CPDAG
+skel.fit <- skeleton(suffStat, indepTest = gaussCItest, p = ncol(otu), alpha = 0.5, labels = V)
+# 140 undirected edges
+
+# Estimaeted CPDAG, taken from the aIDA algorithm
+pc.fit <- udag2pdagRelaxed(skel.fit, solve.confl=FALSE)
+# 137 directed, 3 undirected edges
+
+#pdf('Scripts/Eukaryotes/Res/E_aIDA/E_skeleton.graph_no.agglomeration.pdf')
+plot(pc.fit, main = "Eukaryotes Estimated Skeleton ")
+#dev.off()
+
+
+```
+
+```{r}
+
+set.seed(2121)
+
+#pres.abs.mat <- as(skel.fit, "amat") # Presence/absence
+
+# https://cran.r-project.org/web/packages/pcalg/vignettes/vignette2018.pdf
+
+adj.mat <- as(pc.fit, 'amat') # type: cpdag
+
+grph <- graph_from_adjacency_matrix(adj.mat, mode="directed", diag=FALSE)
+
+# Colors
+taxa.table <- tax_table(e.f)
+phyla <- as.character(taxa.table[, "phylum"])
+vertex.colors <- sapply(phyla, function(x) phylum.color[x])
+
+vsize <- rowMeans(clr(otu),1)+6 # Vertex
+
+LO <- layout.fruchterman.reingold(grph)
+#v.size <- rowMeans(clr(otu),1)+6 # Vertex
+# 99 vertex
+# 149 edges
+
+# no color bc the adj mat doesnt contains weigths
+
+plot(grph, 
+     vertex.size = vsize,
+     vertex.color = vertex.colors,
+     edge.arrow.size = 1,
+     layout = LO,
+     main="Eukaryote Network Plot (adj.mat)")
+
+```
+
+```{r}
+
+w.adj.mat <- as.matrix(resMat*adj.mat)
+
+grph <- graph_from_adjacency_matrix(w.adj.mat, mode="directed", diag=FALSE, weighted = TRUE)
+
+V(grph)$size <- igraph:::degree(grph) + 1 # the +1 is to avoid size zero vertices
+V(grph)$color <- "#D3D3D3"
+
+#Edges = values in the weighted.adj.mat
+E(grph)$color <- 'green' # POSITIVE
+E(grph)$color[E(grph)$weight<0] <- 'red'#NEGATIVE
+E(grph)$width <- abs(E(grph)$weight)*10
+# 99 Vertex
+# 149 edges
+
+plot(grph,
+     vertex.label.color="black",
+     vertex.size = 4, 
+     edge.arrow.size = 1,
+     layout=layout.circle(grph))
+
+```
+
+```{r}
+
+plot(grph, 
+     vertex.size = vsize,
+     vertex.color = vertex.colors,
+     edge.arrow.size = 1,
+     main="Eukaryote Network Plot (weighted.adj.mat)")
+
+```
+
+
+### Heatmap
+
+```{r}
+
+set.seed(2112)
+
+#pdf('Scripts/Eukaryotes/Res/E_aIDA/E_heatmap_no.agglomeration.pdf', 20, 20)
+Heatmap(resMat, name = "mat", rect_gp = gpar(col = "white", lwd = 1),
+        column_title = 'Cause',
+        row_title = 'Effect',
+        column_km = 2,
+        row_km = 2,
+        show_parent_dend_line = TRUE)
+dev.off()
+
+# Check the legend (you dont have very stronger interactions)
+
+```
+
+# After Agglomeration
+
+```{r}
+
+euk.ps <- readRDS('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_agglomerated.ps.rds')
+
+# RELATIVE ABUNDANCES
+euk.rel <- transform_sample_counts(euk.ps, function(x) x / sum(x))
+euk.otu.rel <- as.data.frame(euk.rel@otu_table)
+
+```
+
+
+```{r}
+
+e.otu <- as.data.frame(euk.ps@otu_table)
+
+e.vst <- varianceStabilizingTransformation(as.matrix(e.otu+1), fitType='local')
+
+plot(e.vst[,15])
+plot(log(1+e.otu[,15]))
+
+```
+
+## Analysis
+
+```{r}
+
+resMat <- read.table('Scripts/Eukaryotes/Res/E_aIDA/E_resMat.5_after.agglomeration.tsv', header = TRUE, sep = '\t')
+
+resMat <- as.matrix(resMat)
+diag(resMat) <- 0
+# Col = causes
+# Row = effects 
+
+write.table(resMat, file = 'Scripts/Eukaryotes/Res/E_aIDA/E_resMat.5_after.agglomeration.tsv', sep = "\t", dec = '.')
+
+```
+
+```{r}
+
+melted_aIDA <- melt(resMat) # 4624
+colnames(melted_aIDA) <- c('Cause', 'Effect', 'Value.aIDA')
+
+melted_aIDA <- melted_aIDA %>%
+  filter(Cause != Effect) # no self interactions
+# 3306
+  
+```
+
+```{r}
+
+ggplot(melted_aIDA, aes(Value.aIDA)) +
+  geom_histogram(binwidth = 0.1, fill = "blue", color = "black") +
+  labs(title = "aIDA Histogram - Eukaryotes", x = "Value", y = "Frequency") +
+  theme_minimal()
+
+#ggsave('Scripts/Eukaryotes/Res/E_aIDA/E_histogram.vst.pdf')
+
+```
+
+### Clustering
+
+#### Causes (ROWS)
+
+```{r}
+
+set.seed(1234)
+
+# Clustering of ROWS
+
+#pdf('Scripts/Eukaryotes/Res/E_aIDA/E_cluster.silhoutte.rows.pdf', 10, 5)
+fviz_nbclust(resMat, kmeans, method = "silhouette") # 2
+#dev.off()
+
+k <- kmeans(resMat, centers = 2)
+#pdf('Scripts/Eukaryotes/Res/E_aIDA/E_cluster.rows.pdf')
+fviz_cluster(k, resMat)
+#dev.off()
+
+```
+
+```{r}
+
+res.df <- data.frame(OTU = names(k$cluster), 
+                     cluster = k$cluster)
+
+write.table(res.df, file = 'Scripts/Eukaryotes/Res/E_aIDA/E_cluster.rows.tsv', sep = "\t")
+
+otu.c <- as.data.frame(t(euk.otu.rel))
+otu.c$OTU <- rownames(otu.c)
+otu.c <- merge(otu.c, res.df)
+otu.c$cluster <- as.factor(otu.c$cluster)
+
+otu_long <- otu.c %>%
+  pivot_longer(cols = -c(cluster, OTU), 
+               names_to = "sample", 
+               values_to = "count") %>%
+  mutate(log_count = - log10(count + 1e-6))
+ 
+otu_summary <- otu_long %>%
+  group_by(sample, cluster) %>%
+  summarise(log_mean_count = mean(log_count),
+            mean_count = mean(count),
+            log_count = log10(mean_count))
+
+#pdf('Scripts/Eukaryotes/Res/E_aIDA/E_cluster.rows.log10.pdf')
+ggplot(otu_summary, aes(x = sample, y = log_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = "Log10(Mean Count)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#dev.off()
+
+#pdf('Scripts/Eukaryotes/Res/E_aIDA/E_cluster.rows.mean.pdf')
+ggplot(otu_summary, aes(x = sample, y = mean_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = 'Mean Count') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#dev.off()
+
+```
+
+#### Effect (COLS)
+
+```{r}
+
+set.seed(1234)
+
+# Clustering of ROWS
+#pdf('Scripts/Eukaryotes/Res/E_aIDA/E_cluster.silhoutte.cols.pdf', 10, 5)
+fviz_nbclust(t(resMat), kmeans, method = "silhouette") # 2
+#dev.off()
+
+k <- kmeans(resMat, centers = 2)
+#pdf('Scripts/Eukaryotes/Res/E_aIDA/E_cluster.cols.pdf')
+fviz_cluster(k, t(resMat))
+#dev.off()
+
+```
+
+```{r}
+
+res.df <- data.frame(OTU = names(k$cluster), 
+                     cluster = k$cluster)
+
+write.table(res.df, file = 'Scripts/Eukaryotes/Res/E_aIDA/E_cluster.cols.tsv', sep = "\t")
+
+otu.c <- as.data.frame(t(euk.otu.rel))
+otu.c$OTU <- rownames(otu.c)
+otu.c <- merge(otu.c, res.df)
+otu.c$cluster <- as.factor(otu.c$cluster)
+
+otu_long <- otu.c %>%
+  pivot_longer(cols = -c(cluster, OTU), 
+               names_to = "sample", 
+               values_to = "count") %>%
+  mutate(log_count = - log10(count + 1e-6))
+ 
+otu_summary <- otu_long %>%
+  group_by(sample, cluster) %>%
+  summarise(log_mean_count = mean(log_count),
+            mean_count = mean(count),
+            log_count = log10(mean_count))
+
+#pdf('Scripts/Eukaryotes/Res/E_aIDA/E_cluster.cols.log10.pdf')
+ggplot(otu_summary, aes(x = sample, y = log_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = "Log10(Mean Count)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#dev.off()
+
+#pdf('Scripts/Eukaryotes/Res/E_aIDA/E_cluster.cols.mean.pdf')
+ggplot(otu_summary, aes(x = sample, y = mean_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = 'Mean Count') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#dev.off()
+
+```
+
+### Heatmap 
+
+```{r}
+
+set.seed(2112)
+
+#pdf('Scripts/Eukaryotes/Res/E_aIDA/E_heatmap.pdf', 15, 15)
+Heatmap(resMat, name = "mat", rect_gp = gpar(col = "white", lwd = 1),
+        column_title = 'Effect',
+        row_title = 'Cause',
+        column_km = 2,
+        row_km = 2,
+        show_parent_dend_line = TRUE)
+#dev.off()
+
+# Check the legend (you dont have very stronger interactions)
+
+
+```
+
+
+### Bipartite
+
+```{r}
+
+melted.e <- melt(resMat)
+colnames(melted.e) <- c('from', 'to', 'value')
+
+#   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#-0.95686 -0.12431  0.00000  0.01153  0.12738  1.35261 
+
+filt.e <- melted.e %>%
+  filter(value <= -0.90| value >= 1)
+# 21
+
+filt.e <- filt.e %>%
+  mutate(from_enrichment = de.ds$expression[match(paste0('E_', filt.e$from), de.ds$taxonomy)])%>%
+  mutate(to_enrichment = de.ds$expression[match(paste0('E_', filt.e$to), de.ds$taxonomy)])
+
+```
+
+```{r}
+
+# FROM
+asv_taxonomy_from <- as.data.frame(tax_table(euk.ps)) %>%
+  select(phylum) %>%
+  rownames_to_column(var = "ASV")
+
+filt.e <- filt.e %>%
+  mutate(from_phylum = asv_taxonomy_from$phylum[match(filt.e$from, asv_taxonomy_from$ASV)]) %>%
+  mutate(from_de = de.ds$expression[match(paste0('E_', filt.e$from), de.ds$taxonomy)])
+
+# TO
+asv_taxonomy_to <- as.data.frame(tax_table(euk.ps)) %>%
+  select(phylum) %>%
+  rownames_to_column(var = "ASV")
+
+filt.e <- filt.e %>%
+  mutate(to_phylum = asv_taxonomy_to$phylum[match(filt.e$to, asv_taxonomy_to$ASV)]) %>%
+  mutate(to_de = de.ds$expression[match(paste0('E_', filt.e$to), de.ds$taxonomy)])
+
+# Color match
+filt.e <- filt.e %>%
+  mutate(from_color = phylum.color[from_phylum],
+         from_de = enrichment.color[from_de],
+         to_color = phylum.color[to_phylum],
+         to_de = enrichment.color[to_de])
+
+```
+
+```{r}
+
+# Bipartite graph
+bi.graph <- graph_from_data_frame(filt.e, directed = TRUE) 
+# is bipartite
+
+V(bi.graph)$type <- ifelse(V(bi.graph)$name %in% filt.e$from, TRUE, FALSE)
+
+# From
+V(bi.graph)$fill[V(bi.graph)$type == TRUE] <- filt.e$from_color[match(V(bi.graph)$name[V(bi.graph)$type == TRUE], filt.e$from)]
+V(bi.graph)$outline[V(bi.graph)$type == TRUE] <- filt.e$from_de[match(V(bi.graph)$name[V(bi.graph)$type == TRUE], filt.e$from)]
+
+# To
+V(bi.graph)$fill[V(bi.graph)$type == FALSE] <- filt.e$to_color[match(V(bi.graph)$name[V(bi.graph)$type == FALSE], filt.e$to)]
+V(bi.graph)$outline[V(bi.graph)$type == FALSE] <- filt.e$to_de[match(V(bi.graph)$name[V(bi.graph)$type == FALSE], filt.e$to)]
+
+E(bi.graph)$weight <- filt.e$value
+E(bi.graph)$color <- 'green' # POSITIVE
+E(bi.graph)$color[E(bi.graph)$weight < 0] <- 'red' # NEGATIVE
+
+# Use layout
+LO <- layout_as_bipartite(bi.graph)
+LO <- LO[, c(2, 1)]
+LO[, 2] <- LO[, 2] - 3
+
+#pdf('Scripts/Eukaryotes/Res/E_aIDA/E_bipartite.pdf',  height = 15, width = 15)
+plot(
+  bi.graph,
+  layout = LO,
+  vertex.label.cex = 1.2,
+  vertex.label.family = 'sans',
+  vertex.label.color = 'black',
+  vertex.color = V(bi.graph)$fill,   
+  vertex.frame.color = V(bi.graph)$outline,  
+  vertex.frame.width = 5            
+)
+#dev.off()
+
+```
+
+
+
+### Network Skeleton
+
+```{r}
+
+set.seed(123)
+
+otu <- e.vst
+
+# form pcalg vignettes
+
+V <- colnames(otu) # asv names from vst
+
+suffStat <- list(C = cor(otu), n = nrow(otu))
+
+# Estimate initial skeleton CPDAG
+skel.fit <- skeleton(suffStat, indepTest = gaussCItest, p = ncol(otu), alpha = 0.5, labels = V)
+# 125 undirected edges
+
+# Estimaeted CPDAG, taken from the aIDA algorithm
+pc.fit <- udag2pdagRelaxed(skel.fit, solve.confl=FALSE)
+# 125 directed edges
+
+#pdf('Scripts/Eukaryotes/Res/E_aIDA/E_skeleton.pdf')
+plot(pc.fit, main = "Estimated Skeleton")
+#dev.off()
+
+```
+
+```{r}
+
+set.seed(2121)
+
+#pres.abs.mat <- as(skel.fit, "amat") # Presence/absence
+
+# https://cran.r-project.org/web/packages/pcalg/vignettes/vignette2018.pdf
+
+adj.mat <- as(pc.fit, 'amat') # type: cpdag
+
+grph <- graph_from_adjacency_matrix(adj.mat, mode="directed", diag=FALSE)
+
+LO <- layout.fruchterman.reingold(grph)
+vsize <- rowMeans(clr(otu),1)+6 # Vertex
+
+# no color bc the adj mat doesnt contains weigths
+
+plot(grph, 
+     vertex.size = 4,
+     edge.arrow.size = 1,
+     layout = bact.coords,
+     main="Network Plot")
+
+
+```
+
+```{r}
+
+w.adj.mat <- as.matrix(resMat*adj.mat)
+
+grph <- graph_from_adjacency_matrix(w.adj.mat, mode="directed", diag=FALSE, weighted = TRUE)
+
+#V(grph)$name <- otu.map$family
+V(grph)$size <- igraph:::degree(grph) + 1 # the +1 is to avoid size zero vertices
+V(grph)$color <- "#D3D3D3"
+
+#Edges = values in the weighted.adj.mat
+E(grph)$color <- 'green' # POSITIVE
+E(grph)$color[E(grph)$weight<0] <- 'red'#NEGATIVE
+E(grph)$width <- abs(E(grph)$weight)*10
+# 99 Vertex
+# 149 edges
+
+V(grph)$name <- colnames(w.adj.mat)
+vsize <- rowMeans(clr(otu),1)+6 # Vertex
+
+# Colors per phylum
+taxa.table <- tax_table(euks)
+
+phyla <- as.character(taxa.table[, "phylum"])
+unique.phyla <- unique(phyla)
+n.phy <- length(unique.phyla)
+
+colors.phyla <- brewer.pal(min(n.phy, 8), "Set3")
+vertex.colors <- sapply(phyla, function(x) colors.phyla[which(unique.phyla == x)])
+
+#pdf('Scripts/Eukaryotes/Res/E_aIDA/E_circleInteractions.pdf', height = 40, width = 40)
+plot(grph,
+
+     edge.arrow.size = 1,
+     layout = LO, 
+     
+     
+     vertex.label.cex = 1.2,
+     vertex.label.family = 'sans',
+     vertex.label.color = 'black',
+     vertex.size = vsize*2.3,
+     vertex.size = vsize, 
+     vertex.color = vertex.colors,
+     
+     edge.width = E(grph)$width,
+     main="aIDA Eukaryotes- Glasso")
+
+# Add a legend
+legend("topright", 
+       legend = c("Positive Interaction", "Negative Interaction"), 
+       col = c("green", "red"), 
+       pch = 15,  # Square symbols for points
+       cex = 3,
+       pt.cex = 2)
+
+# Legend for phyla colors
+legend("bottomleft", 
+       legend = unique.phyla, 
+       fill = colors.phyla, 
+       title = "Phylum",
+       cex = 3)  # Adjust size of legend text
+#dev.off()
+
+```
+
+```{r}
+
+df <- as_data_frame(grph, what = 'both')
+edg <- df$edges
+
+edg <- edg %>%
+  select(-width) %>%
+  mutate(quantile = ntile(weight, 4))
+# 125
+
+# Working with only the upper and lower quantile, stronger interactions
+lower.q <- edg %>%
+  subset(quantile == 1)
+
+upper.q <- edg %>%
+  subset(quantile == 4)
+
+q <- rbind(lower.q, upper.q)
+# 63 
+
+q_vertices <- unique(c(q$from, q$to)) # 55
+
+
+# Subgraph contains only the specified vertices and all the edges among them
+b.grph <- subgraph(grph, q_vertices)
+
+
+#pdf('Scripts/Bacteria/Res/B_aIDA/B.vst.names_low.up.q_interactions.pdf', height = 15, width = 15)
+plot(b.grph,
+     edge.arrow.size = 0.4)
+#dev.off()
+
+#pdf('Scripts/Bacteria/Res/B_aIDA/B.vst.names_low.up.q_circleInteractions.pdf', height = 15, width = 15)
+plot(b.grph,
+     vertex.label.color="black",
+     layout=layout.circle(b.grph),
+     edge.arrow.size = 0.4)
+#dev.off()
+
+```
+
+# aIDA Algorithm
+
+
+```{r, eval=FALSE, print = FALSE, include=FALSE}
+
+## Path source aIDA.R
+source('Scripts/aIDA/aIDA.R')
+
+alpha <- 0.5 # parameter of PC algorithm
+#not higher than 0.5
+
+otu <- e.vst
+  
+vars <- ncol(otu)      # OTU
+samples <- nrow(otu)   # Samples
+  
+data <- otu
+  
+causes <- 1:vars
+targets <- 1:vars
+  
+  
+#### Subsampling
+n <- nrow(data)
+subSize <- floor(n/2) 
+  
+effectsN <- vector("list", length =length(causes))
+  
+for(i in 1:100)
+  {
+  	print(i)
+  
+  	subIndices <- sample(n, subSize, replace = FALSE)
+  
+  	subDat <- data[subIndices,] 
+  
+  	# Apply PC algorithm 
+  	indepTest <- gaussCItest
+  	suffStat <- list(C=cor(subDat), n=subSize)
+  	skel <- skeleton(suffStat, indepTest, p=ncol(subDat), 
+  	                 alpha, method="stable")
+  	pc.fit <-udag2pdagRelaxed(skel,solve.confl=FALSE)
+  
+  	# Estimate causal effects for each cause and each subsampling run using IDA
+  	for (j in 1:length(causes))
+  {
+  		cause <- causes[j]
+  		effects1 <- idaFast(cause,targets,cov(subDat),pc.fit@graph)
+  		# x.pos = cause (row)
+  		# y.pos.set = targets (coloumns)
+  
+  		effectsN[[cause]] <- cbind(effectsN[[cause]],effects1)
+  
+  	}
+  }
+  
+resMat <- do.call(rbind, lapply(effectsN, getEstimEffectsPerCause))
+rownames(resMat) <- colnames(resMat) <- colnames(otu) # matrix
+  
+out <- 'Scripts/Eukaryotes/Res/E_aIDA/E_resMat.5_after.agglomeration.tsv'
+write.table(resMat, file = out, sep = "\t")
+
+```
+

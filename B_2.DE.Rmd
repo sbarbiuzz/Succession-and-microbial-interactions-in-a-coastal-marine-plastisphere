@@ -1,0 +1,931 @@
+---
+title: "WHD_BE_DifferentialAbundance"
+output: html_notebook
+---
+
+```{r setup, include = FALSE, print = FALSE}
+
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/Francesca/Documents/INTERNSHIP/") 
+
+```
+
+```{r, echo = FALSE, include = FALSE, print = FALSE}
+
+library(readxl)
+library(dplyr)
+library(purrr)
+library(tidyverse)
+library(reshape2) # melt function
+
+library(ggplot2)
+library(ggfortify)
+library(RColorBrewer)
+
+library(SpiecEasi)
+
+# Ecology package
+library(vegan)
+library(phyloseq)
+library(microbiome)
+
+# aIDA
+library(pcalg)
+library(Rgraphviz)
+library(graph)
+library(pheatmap)
+library(ComplexHeatmap)
+library(DESeq2)
+library(igraph)
+
+library(microViz)
+
+library(ggrepel)
+
+
+```
+
+```{r}
+
+be.ps <- readRDS('Scripts/phyloseq.objects/bact.ps.rds')
+
+```
+
+
+# Material
+
+```{r}
+
+material <- unique(sample_data(be.ps)$material)
+# [1] "polypropylene"   "high density polyethylene" "polystyrene" 
+# [4] "glass"
+
+material.ps <- list()
+
+for (mat in material) {
+  ps.subset <- subset_samples(be.ps, material == mat)
+  material.ps[[mat]] <- ps.subset
+}
+
+metadata <- as.data.frame(be.ps@sam_data)
+
+# Phyloseq object per material
+ppp <- material.ps$polypropylene
+pee <- material.ps$`high density polyethylene`
+psy <- material.ps$polystyrene
+glass <- material.ps$glass
+
+```
+
+## Polypropylene (PPP)
+
+```{r}
+
+otu <- ppp@otu_table
+# 13 samples
+
+# FOR SELECTING TOP ABUNDANCES
+tot.abundance <- colSums(otu)
+
+# Max abundance index for each OTU
+#tops <- order(tot.abundance, decreasing = TRUE)[1:30]
+#otu <- otu[,tops]
+
+# Normalization of each OTU based on its maximum abundance
+# Only one 1.0 per columns, as it will be maximum only in one sample
+otu <- apply(otu, 2, function(x) x / max(x))
+otu <- t(otu)
+
+wheremax <- apply(otu, 1, which.max) # max location of OTU
+otu.order <- order(wheremax)
+otu.ordered <- otu[otu.order,]
+
+colnames(otu.ordered) <- c('17/07 - 1', '17/07 - 2', '17/07 - 3', '24/07 - 1', '24/07 - 2', '31/07 - 1', '31/07 - 2', '31/07 - 3', '07/08 - 1', '07/08 - 2', '06/09', '08/11 - 1', '08/11 - 2')
+
+#pdf('Scripts/Bacteria/Res/B_DE/PPP_timeseries.pdf',height = 20, width = 10)
+Heatmap(otu.ordered,
+        column_order = colnames(otu.ordered),
+        cluster_rows = F,
+        column_title = 'Polypropylene') 
+#dev.off()
+
+```
+
+```{r}
+
+ASVS <- c('G.Oceanibaculum.765', 'G.Parablastomonas.605')
+
+sub.otu <- as.data.frame(otu)
+sub.otu$OTU.ID <- rownames(sub.otu)
+
+# Subset and long format
+sub.otu <- sub.otu %>%
+  filter(OTU.ID %in% ASVS) %>%
+  pivot_longer(names_to = "Sample", values_to = "Abundance", cols=-OTU.ID)
+
+ggplot(sub.otu, aes(x = Sample, y = Abundance, color = OTU.ID, group = OTU.ID))+
+  geom_line() +
+  geom_point() +
+  labs(title = "Normalized abundance across samples", 
+       x = "Sample", y = "Abundance") +
+  theme_minimal()
+
+```
+
+## High density polyethylene (PEE)
+
+```{r}
+
+otu <- pee@otu_table
+# 14 samples
+
+# FOR SELECTING TOP ABUNDANCES
+#tot.abundance <- colSums(otu)
+
+# Max abundance index for each OTU
+#tops <- order(tot.abundance, decreasing = TRUE)[1:30]
+#otu <- otu[,tops]
+
+# Normalization of each OTU based on its maximum abundance
+otu <- apply(otu, 2, function(x) x / max(x))
+otu <- t(otu)
+
+wheremax <- apply(otu, 1, which.max)
+otu.order <- order(wheremax)
+otu.ordered <- otu[otu.order,]
+
+colnames(otu.ordered) <- c('17/07 - 1', '17/07 - 2', '17/07 - 3', '24/07 - 1', '24/07 - 2', '31/07 - 1', '31/07 - 2', '07/08 - 1', '07/08 - 2', '07/08 - 3', '06/09 - 1', '06/09 - 2', '02/10', '06/11')
+
+#pdf('Scripts/Bacteria/Res/B_DE/HDP_timeseries.pdf',height = 20, width = 10)
+Heatmap(otu.ordered,
+        column_order = colnames(otu.ordered),
+        cluster_rows = F,
+        column_title = 'High Density Polyethylene') 
+#dev.off()
+
+```
+
+## Polystyrene (PSY)
+
+```{r}
+
+otu <- psy@otu_table
+# 13 samples
+
+# FOR SELECTING TOP ABUNDANCES
+#tot.abundance <- colSums(otu)
+
+# Max abundance index for each OTU
+#tops <- order(tot.abundance, decreasing = TRUE)[1:30]
+#otu <- otu[,tops]
+
+# Normalization of each OTU based on its maximum abundance
+otu <- apply(otu, 2, function(x) x / max(x))
+otu <- t(otu)
+
+wheremax <- apply(otu, 1, which.max)
+otu.order <- order(wheremax)
+otu.ordered <- otu[otu.order,]
+
+colnames(otu.ordered) <- c('17/07 - 1', '17/07 - 2', '17/07 - 3', '24/07 - 1', '24/07 - 2', '31/07 - 1', '31/07 - 2', '31/07 - 3', '07/08', '06/09 - 1', '06/09 - 2', '02/10 - 1 ', '02/10 - 2')
+
+pdf('Scripts/Bacteria/Res/B_DE/PSY_timeseries.pdf',height = 20, width = 10)
+Heatmap(otu.ordered,
+        column_order = colnames(otu.ordered),
+        cluster_rows = F,
+        column_title = 'Polystyrene') 
+dev.off()
+
+```
+
+## Glass
+
+```{r}
+
+otu <- glass@otu_table
+# 11 samples
+
+# FOR SELECTING TOP ABUNDANCES
+#tot.abundance <- colSums(otu)
+
+# Max abundance index for each OTU
+#tops <- order(tot.abundance, decreasing = TRUE)[1:30]
+#otu <- otu[,tops]
+
+# Normalization of each OTU based on its maximum abundance
+otu <- apply(otu, 2, function(x) x / max(x))
+otu <- t(otu)
+
+wheremax <- apply(otu, 1, which.max)
+otu.order <- order(wheremax)
+otu.ordered <- otu[otu.order,]
+
+colnames(otu.ordered) <- c('17/07 - 1', '17/07 - 2', '24/07 - 1', '24/07 - 2', '31/07 - 1', '31/07 - 2', '07/08', '06/09 - 1', '06/09 - 2', '06/09 - 3', '02/10')
+
+#pdf('Scripts/Bacteria/Res/B_DE/G_timeseries.pdf',height = 20, width = 10)
+Heatmap(otu.ordered,
+        column_order = colnames(otu.ordered),
+        cluster_rows = F,
+        column_title = 'Glass') 
+#dev.off()
+
+```
+
+# Time
+
+```{r}
+
+metadata <- be.ps@sam_data
+
+metadata$collection_date <- as.Date(metadata$collection_date)
+
+metadata$season <- ifelse(format(metadata$collection_date, "%m") %in% c("06", "07", "08"), "Summer", 'Fall')
+
+be.ps@sam_data <- metadata
+
+```
+
+## Per Season
+
+```{r, print = FALSE}
+
+dds.df_season <- phyloseq_to_deseq2(be.ps, ~ season)
+
+dds.s <- DESeq(dds.df_season)
+
+```
+
+```{r}
+
+res <- results(dds.s)
+
+res_df <- as.data.frame(res)
+res_df$taxonomy <- rownames(res_df)
+
+#hist(res_df$pvalue, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+p.threshold <- 0.05
+
+#hist(res_df$log2FoldChange, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+l2fc.threshold <- 0.5
+# if 1, the  abundance is doubled or halved between conditions
+
+res_df$expression <- "NO"
+res_df$expression[res_df$log2FoldChange > l2fc.threshold & res_df$padj < p.threshold] <- "Summer"
+res_df$expression[res_df$log2FoldChange < (-l2fc.threshold) & res_df$padj < p.threshold] <- "Fall"
+
+res_df$labels <- NA
+res_df$labels[res_df$expression != "NO"] <- res_df$taxonomy[res_df$expression != "NO"]
+
+ggplot(res_df, aes(x = log2FoldChange, y = -log10(padj), col=expression, label=labels)) +
+  geom_point() +
+  theme_minimal() +
+  geom_vline(xintercept = c(-l2fc.threshold, l2fc.threshold), col = "black", linetype = 'dashed') + # log2FC threshold
+  geom_hline(yintercept = -log10(p.threshold), col = "black", linetype = 'dashed') + # p threshold
+  ggtitle('Summer vs Fall Enrichment') +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_color_manual(name="Enrichment",values=c("red", 'black',"blue"))+
+  geom_text_repel(show_guide=F)
+
+#ggsave('Scripts/Bacteria/Res/B_DE/summer_vs_fall.pdf', height = 7, width = 14)
+```
+
+## Per Date
+
+```{r, print = FALSE}
+
+dds.df_time <- phyloseq_to_deseq2(be.ps, ~ collection_date)
+
+dds.t <- DESeq(dds.df_time)
+
+```
+
+### 24/07 vs 17/07
+
+```{r}
+
+res1 <- results(dds, contrast=c('collection_date', '2013-07-24','2013-07-17'))
+# This extract the different levels of differentiation
+
+summary(res1)
+
+plotMA(res1)
+
+```
+
+```{r}
+
+res_df <- as.data.frame(res1)
+
+res_df$taxonomy <- rownames(res_df)
+
+#hist(res_df$pvalue, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+p.threshold <- 0.05
+
+#hist(res_df$log2FoldChange, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+l2fc.threshold <- 0.5
+# if 1, the  abundance is doubled or halved between conditions
+
+res_df$expression <- "NO"
+res_df$expression[res_df$log2FoldChange > l2fc.threshold & res_df$padj < p.threshold] <- "UP"
+res_df$expression[res_df$log2FoldChange < (-l2fc.threshold) & res_df$padj < p.threshold] <- "DOWN"
+
+res_df$labels <- NA
+res_df$labels[res_df$expression != "NO"] <- res_df$taxonomy[res_df$expression != "NO"]
+
+ggplot(res_df, aes(x = log2FoldChange, y = -log10(padj), col=expression, label=labels)) +
+  geom_point() +
+  theme_minimal() +
+  geom_vline(xintercept = c(-l2fc.threshold, l2fc.threshold), col = "red") + # log2FC threshold
+  geom_hline(yintercept = -log10(p.threshold), col = "blue") + # p threshold+
+  ggtitle('24/07 vs 17/07') +
+  geom_text_repel()
+
+```
+
+### 31/07 vs 17/07
+
+```{r}
+
+res2 <- results(dds, contrast=c('collection_date', '2013-07-31','2013-07-17'))
+# This extract the different levels of differentiation
+
+summary(res2)
+
+plotMA(res2)
+
+```
+
+```{r}
+
+res_df <- as.data.frame(res2)
+
+res_df$taxonomy <- rownames(res_df)
+
+#hist(res_df$pvalue, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+p.threshold <- 0.05
+
+#hist(res_df$log2FoldChange, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+l2fc.threshold <- 0.5
+# if 1, the  abundance is doubled or halved between conditions
+
+res_df$expression <- "NO"
+res_df$expression[res_df$log2FoldChange > l2fc.threshold & res_df$padj < p.threshold] <- "UP"
+res_df$expression[res_df$log2FoldChange < (-l2fc.threshold) & res_df$padj < p.threshold] <- "DOWN"
+
+res_df$labels <- NA
+res_df$labels[res_df$expression != "NO"] <- res_df$taxonomy[res_df$expression != "NO"]
+
+ggplot(res_df, aes(x = log2FoldChange, y = -log10(padj), col=expression, label=labels)) +
+  geom_point() +
+  theme_minimal() +
+  geom_vline(xintercept = c(-l2fc.threshold, l2fc.threshold), col = "red") + # log2FC threshold
+  geom_hline(yintercept = -log10(p.threshold), col = "blue") + # p threshold+
+  ggtitle('31/07 vs 17/07') +
+  geom_text_repel()
+
+```
+
+### 07/08 vs 17/07
+
+```{r}
+
+res3 <- results(dds, contrast=c('collection_date', '2013-08-07','2013-07-17'))
+# This extract the different levels of differentiation
+
+summary(res3)
+
+plotMA(res3)
+
+```
+
+```{r}
+
+res_df <- as.data.frame(res3)
+
+res_df$taxonomy <- rownames(res_df)
+
+#hist(res_df$pvalue, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+p.threshold <- 0.05
+
+#hist(res_df$log2FoldChange, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+l2fc.threshold <- 0.5
+# if 1, the  abundance is doubled or halved between conditions
+
+res_df$expression <- "NO"
+res_df$expression[res_df$log2FoldChange > l2fc.threshold & res_df$padj < p.threshold] <- "UP"
+res_df$expression[res_df$log2FoldChange < (-l2fc.threshold) & res_df$padj < p.threshold] <- "DOWN"
+
+res_df$labels <- NA
+res_df$labels[res_df$expression != "NO"] <- res_df$taxonomy[res_df$expression != "NO"]
+
+ggplot(res_df, aes(x = log2FoldChange, y = -log10(padj), col=expression, label=labels)) +
+  geom_point() +
+  theme_minimal() +
+  geom_vline(xintercept = c(-l2fc.threshold, l2fc.threshold), col = "red") + # log2FC threshold
+  geom_hline(yintercept = -log10(p.threshold), col = "blue") + # p threshold+
+  ggtitle('07/08 vs 17/07') +
+  geom_text_repel()
+
+```
+
+### 06/09 vs 17/07
+
+### 02/10 vs 17/07
+
+### 06/11 vs 17/07
+
+```{r}
+
+res.t <- results(dds.t)
+
+# resultsNames(dds.t)
+
+# Differential analysis in contrast with the initial collection, on 17/07, taken as timestep = 0
+# [1] "Intercept"                                "collection_date_2013.07.24_vs_2013.07.17"
+# [3] "collection_date_2013.07.31_vs_2013.07.17" "collection_date_2013.08.07_vs_2013.07.17"
+# [5] "collection_date_2013.09.06_vs_2013.07.17" "collection_date_2013.10.02_vs_2013.07.17"
+# [7] "collection_date_2013.11.06_vs_2013.07.17"
+# Levels: 2013-07-17 2013-07-24 2013-07-31 2013-08-07 2013-09-06 2013-10-02 2013-11-06
+
+
+summary(res.t)
+
+plotMA(res.t)
+
+# BaseMean <- average of normalized count values, dividing by size factor, taken over all samples
+# L2FC <- effect size estimate: how much the gene (taxonomy) expression seems to have changed  between comparison and control groups (control group is the first in alphabetical order)
+# stat <- value of test statistics
+
+```
+
+```{r}
+
+# Most significantly differentially expressed gene based on the padj value
+
+# res[which.min(res$padj),] #SubC.Hypotrichia.141
+
+# Normalized counts plus a pseudocount of 0.5 are shown by default.
+
+d <- plotCounts(dds.t, gene=which.min(res.t$padj), intgroup="collection_date", 
+                returnData=TRUE)
+
+ggplot(d, aes(x=collection_date, y=count)) + 
+  geom_point() +
+  theme_minimal() +
+  ggtitle('SubC.Hypotrichia.141')
+
+```
+
+```{r}
+
+# 2013.11.06 vs 2013.07.17
+
+res_df <- as.data.frame(res.t)
+
+res_df$taxonomy <- rownames(res_df)
+
+#hist(res_df$pvalue, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+p.threshold <- 0.05
+
+#hist(res_df$log2FoldChange, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+l2fc.threshold <- 0.5
+# if 1, the  abundance is doubled or halved between conditions
+
+res_df$expression <- "NO"
+res_df$expression[res_df$log2FoldChange > l2fc.threshold & res_df$padj < p.threshold] <- "UP"
+res_df$expression[res_df$log2FoldChange < (-l2fc.threshold) & res_df$padj < p.threshold] <- "DOWN"
+
+res_df$labels <- NA
+res_df$labels[res_df$expression != "NO"] <- res_df$taxonomy[res_df$expression != "NO"]
+
+ggplot(res_df, aes(x = log2FoldChange, y = -log10(padj), col=expression, label=labels)) +
+  geom_point() +
+  theme_minimal() +
+  geom_vline(xintercept = c(-l2fc.threshold, l2fc.threshold), col = "red") + # log2FC threshold
+  geom_hline(yintercept = -log10(p.threshold), col = "blue") + # p threshold
+  geom_text_repel()
+
+
+```
+
+## Material
+
+```{r}
+
+# Material as the variable of interest
+dds.df_mat <- phyloseq_to_deseq2(be.ps, ~ material)
+# Rows = taxonomies
+# Col = samples
+
+dds.m <- DESeq(dds.df_mat)
+
+# resultsNames(dds.m)
+# [1] "Intercept"                                   "material_high.density.polyethylene_vs_glass"
+# [3] "material_polypropylene_vs_glass"             "material_polystyrene_vs_glass"   
+
+```
+
+### Polystyrene vs Glass
+
+```{r}
+
+res.psy.g <- results(dds.m)
+
+# With no additional arguments to results, the log2 fold change and Wald test p value will be for the last variable in the design formula, and if this is a factor, the comparison will be the last level of this variable over the reference. However, the order of the variables of the design do not matter so long as the user specifies the comparison to build a results table for, using the name or contrast arguments of results.
+
+summary(res.psy.g)
+
+```
+
+```{r}
+
+res_df <- as.data.frame(res.psy.g)
+
+res_df$taxonomy <- rownames(res_df)
+
+#hist(res_df$pvalue, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+p.threshold <- 0.05
+
+#hist(res_df$log2FoldChange, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+l2fc.threshold <- 0.5
+# if 1, the  abundance is doubled or halved between conditions
+
+res_df$expression <- "NO"
+res_df$expression[res_df$log2FoldChange > l2fc.threshold & res_df$padj < p.threshold] <- "Enriched"
+res_df$expression[res_df$log2FoldChange < (-l2fc.threshold) & res_df$padj < p.threshold] <- "Depleted"
+
+res_df$labels <- NA
+res_df$labels[res_df$expression != "NO"] <- res_df$taxonomy[res_df$expression != "NO"]
+
+ggplot(res_df, aes(x = log2FoldChange, y = -log10(padj), col=expression, label=labels)) +
+  geom_point() +
+  theme_minimal() +
+  geom_vline(xintercept = c(-l2fc.threshold, l2fc.threshold), col = "black", linetype = 'dashed') + # log2FC threshold
+  geom_hline(yintercept = -log10(p.threshold), col = "black", linetype = 'dashed') + # p threshold
+  ggtitle('Polystyrene vs Glass') +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_color_manual(name="expression",values=c("red", "blue",'black'))+
+  geom_text_repel()
+
+#ggsave('Bact.Euk/Res/BE_DifferentialAbundance/material/Polystyrene_vs_Glass.pdf', height = 10, width = 10)
+
+```
+
+### Polyethylene vs Glass
+
+```{r}
+
+res.hdp.g <- results(dds.m, contrast=c('material', 'high.density.polyethylene','glass'))
+
+summary(res.hdp.g)
+
+```
+
+```{r}
+
+res_df <- as.data.frame(res.hdp.g)
+
+res_df$taxonomy <- rownames(res_df)
+
+#hist(res_df$pvalue, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+p.threshold <- 0.05
+
+#hist(res_df$log2FoldChange, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+l2fc.threshold <- 0.5
+# if 1, the  abundance is doubled or halved between conditions
+
+res_df$expression <- "NO"
+res_df$expression[res_df$log2FoldChange > l2fc.threshold & res_df$padj < p.threshold] <- "Enriched"
+res_df$expression[res_df$log2FoldChange < (-l2fc.threshold) & res_df$padj < p.threshold] <- "Depleted"
+
+res_df$labels <- NA
+res_df$labels[res_df$expression != "NO"] <- res_df$taxonomy[res_df$expression != "NO"]
+
+ggplot(res_df, aes(x = log2FoldChange, y = -log10(padj), col=expression, label=labels)) +
+  geom_point() +
+  theme_minimal() +
+  geom_vline(xintercept = c(-l2fc.threshold, l2fc.threshold), col = "black", linetype = 'dashed') + # log2FC threshold
+  geom_hline(yintercept = -log10(p.threshold), col = "black", linetype = 'dashed') + # p threshold
+  ggtitle('High Density Polyethylene vs Glass') +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_color_manual(name="expression",values=c("red", "blue",'black'))+
+  geom_text_repel()
+
+#ggsave('Bact.Euk/Res/BE_DifferentialAbundance/material/Polyethylene_vs_Glass.pdf', height = 10, width = 10)
+
+```
+
+### Polypropylene vs Glass
+
+```{r}
+
+res.ppe.g <- results(dds.m, contrast=c('material', 'polypropylene','glass'))
+
+summary(res.ppe.g)
+
+```
+
+```{r}
+
+res_df <- as.data.frame(res.ppe.g)
+
+res_df$taxonomy <- rownames(res_df)
+
+#hist(res_df$pvalue, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+p.threshold <- 0.05
+
+#hist(res_df$log2FoldChange, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+l2fc.threshold <- 0.5
+# if 1, the  abundance is doubled or halved between conditions
+
+res_df$expression <- "NO"
+res_df$expression[res_df$log2FoldChange > l2fc.threshold & res_df$padj < p.threshold] <- "Enriched"
+res_df$expression[res_df$log2FoldChange < (-l2fc.threshold) & res_df$padj < p.threshold] <- "Depleted"
+
+res_df$labels <- NA
+res_df$labels[res_df$expression != "NO"] <- res_df$taxonomy[res_df$expression != "NO"]
+
+ggplot(res_df, aes(x = log2FoldChange, y = -log10(padj), col=expression, label=labels)) +
+  geom_point() +
+  theme_minimal() +
+  geom_vline(xintercept = c(-l2fc.threshold, l2fc.threshold), col = "black", linetype = 'dashed') + # log2FC threshold
+  geom_hline(yintercept = -log10(p.threshold), col = "black", linetype = 'dashed') + # p threshold
+  ggtitle('Polypropylene vs Glass') +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_color_manual(name="expression",values=c("red", "blue",'black'))+
+  geom_text_repel()
+
+#ggsave('Bact.Euk/Res/BE_DifferentialAbundance/material/Polypropylene_vs_Glass.pdf', height = 10, width = 10)
+
+```
+
+### Polyethylene vs Polystyrene
+
+```{r}
+
+res.hdp.psy <- results(dds.m, contrast=c('material', 'high.density.polyethylene','polystyrene'))
+
+summary(res.hdp.psy)
+
+```
+
+```{r}
+
+res_df <- as.data.frame(res.hdp.psy)
+
+res_df$taxonomy <- rownames(res_df)
+
+#hist(res_df$pvalue, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+p.threshold <- 0.05
+
+#hist(res_df$log2FoldChange, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+l2fc.threshold <- 0.5
+# if 1, the  abundance is doubled or halved between conditions
+
+res_df$expression <- "NO"
+res_df$expression[res_df$log2FoldChange > l2fc.threshold & res_df$padj < p.threshold] <- "Enriched"
+res_df$expression[res_df$log2FoldChange < (-l2fc.threshold) & res_df$padj < p.threshold] <- "Depleted"
+
+res_df$labels <- NA
+res_df$labels[res_df$expression != "NO"] <- res_df$taxonomy[res_df$expression != "NO"]
+
+ggplot(res_df, aes(x = log2FoldChange, y = -log10(padj), col=expression, label=labels)) +
+  geom_point() +
+  theme_minimal() +
+  geom_vline(xintercept = c(-l2fc.threshold, l2fc.threshold), col = "black", linetype = 'dashed') + # log2FC threshold
+  geom_hline(yintercept = -log10(p.threshold), col = "black", linetype = 'dashed') + # p threshold
+  ggtitle('High density polyethylene vs Polystyrene') +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_color_manual(name="expression",values=c("red", "blue",'black'))+
+  geom_text_repel()
+
+#ggsave('Bact.Euk/Res/BE_DifferentialAbundance/material/Polyethylene_vs_Polystyrene.pdf', height = 10, width = 10)
+
+```
+
+###Polypropylene vs Polystyrene
+
+```{r}
+
+res.ppe.psy <- results(dds.m, contrast=c('material', 'polypropylene','polystyrene'))
+
+summary(res.ppe.psy)
+
+```
+
+```{r}
+
+res_df <- as.data.frame(res.ppe.psy)
+
+res_df$taxonomy <- rownames(res_df)
+
+#hist(res_df$pvalue, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+p.threshold <- 0.05
+
+#hist(res_df$log2FoldChange, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+l2fc.threshold <- 0.5
+# if 1, the  abundance is doubled or halved between conditions
+
+res_df$expression <- "NO"
+res_df$expression[res_df$log2FoldChange > l2fc.threshold & res_df$padj < p.threshold] <- "Enriched"
+res_df$expression[res_df$log2FoldChange < (-l2fc.threshold) & res_df$padj < p.threshold] <- "Depleted"
+
+res_df$labels <- NA
+res_df$labels[res_df$expression != "NO"] <- res_df$taxonomy[res_df$expression != "NO"]
+
+ggplot(res_df, aes(x = log2FoldChange, y = -log10(padj), col=expression, label=labels)) +
+  geom_point() +
+  theme_minimal() +
+  geom_vline(xintercept = c(-l2fc.threshold, l2fc.threshold), col = "black", linetype = 'dashed') + # log2FC threshold
+  geom_hline(yintercept = -log10(p.threshold), col = "black", linetype = 'dashed') + # p threshold
+  ggtitle('Polypropylene vs Polystyrene') +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_color_manual(name="expression",values=c("red", "blue",'black'))+
+  geom_text_repel()
+
+#ggsave('Bact.Euk/Res/BE_DifferentialAbundance/material/Polypropylene_vs_Polystyrene.pdf', height = 10, width = 10)
+
+```
+
+### Polyethylene vs Polypropylene
+
+```{r}
+
+res.ppe.hdp <- results(dds.m, contrast=c('material', 'polypropylene','high.density.polyethylene'))
+
+summary(res.ppe.hdp)
+
+```
+
+```{r}
+
+res_df <- as.data.frame(res.ppe.hdp)
+
+res_df$taxonomy <- rownames(res_df)
+
+#hist(res_df$pvalue, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+p.threshold <- 0.05
+
+#hist(res_df$log2FoldChange, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+l2fc.threshold <- 0.5
+# if 1, the  abundance is doubled or halved between conditions
+
+res_df$expression <- "NO"
+res_df$expression[res_df$log2FoldChange > l2fc.threshold & res_df$padj < p.threshold] <- "Enriched"
+res_df$expression[res_df$log2FoldChange < (-l2fc.threshold) & res_df$padj < p.threshold] <- "Depleted"
+
+res_df$labels <- NA
+res_df$labels[res_df$expression != "NO"] <- res_df$taxonomy[res_df$expression != "NO"]
+
+ggplot(res_df, aes(x = log2FoldChange, y = -log10(padj), col=expression, label=labels)) +
+  geom_point() +
+  theme_minimal() +
+  geom_vline(xintercept = c(-l2fc.threshold, l2fc.threshold), col = "black", linetype = 'dashed') + # log2FC threshold
+  geom_hline(yintercept = -log10(p.threshold), col = "black", linetype = 'dashed') + # p threshold
+  ggtitle('Polypropylene vs High Density Polyethylene') +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_color_manual(name="expression",values=c("red", "blue",'black'))+
+  geom_text_repel()
+
+#ggsave('Bact.Euk/Res/BE_DifferentialAbundance/material/Polypropylene_vs_Polyethylene.pdf', height = 10, width = 10)
+
+```
+
+#### SPECIFIC
+
+```{r, include = F}
+
+# Glass
+
+glass.dds.res <- rownames(res.ppe.g[which(res.ppe.g$log2FoldChange > 0 & res.ppe.g$padj < .05),])
+
+glass.dds.res <- c(glass.dds.res, rownames(res.hdp.g[which(res.hdp.g$log2FoldChange > 0 & res.hdp.g$padj < .05),]))
+
+glass.dds.res <- c(glass.dds.res, rownames(res.psy.g[which(res.psy.g$log2FoldChange > 0 & res.psy.g$padj < .05),]))
+
+glass.dds.res <- unique(glass.dds.res)
+
+for (taxa in glass.dds.res) {
+
+  plotCounts(dds.m, gene = taxa, intgroup = 'material')
+
+  pdf(paste0('Bact.Euk/Res/BE_DifferentialAbundance/material/Glass/', taxa, "_material.pdf"))
+  plotCounts(dds.m, gene = taxa, intgroup = 'material')
+  dev.off()
+}
+
+
+```
+
+## Time and Material
+
+```{r}
+
+dds.df <- phyloseq_to_deseq2(be.ps, ~ collection_date + material)
+
+dds <- DESeq(dds.df)
+
+res <- results(dds)
+
+resultsNames(dds)
+
+# [1] "Intercept"                                  
+# [2] "collection_date_2013.07.24_vs_2013.07.17"   
+# [3] "collection_date_2013.07.31_vs_2013.07.17"   
+# [4] "collection_date_2013.08.07_vs_2013.07.17"   
+# [5] "collection_date_2013.09.06_vs_2013.07.17"   
+# [6] "collection_date_2013.10.02_vs_2013.07.17"   
+# [7] "collection_date_2013.11.06_vs_2013.07.17"   
+# [8] "material_high.density.polyethylene_vs_glass"
+# [9] "material_polypropylene_vs_glass"            
+#[10] "material_polystyrene_vs_glass" 
+
+summary(res)
+
+plotMA(res, ylim=c(-10,10))
+
+```
+
+```{r}
+
+res_df <- as.data.frame(res)
+
+res_df$taxonomy <- rownames(res_df)
+
+#hist(res_df$pvalue, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+p.threshold <- 0.05
+
+#hist(res_df$log2FoldChange, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+l2fc.threshold <- 0.5
+# if 1, the  abundance is doubled or halved between conditions
+
+res_df$expression <- "NO"
+res_df$expression[res_df$log2FoldChange > l2fc.threshold & res_df$padj < p.threshold] <- "UP"
+res_df$expression[res_df$log2FoldChange < (-l2fc.threshold) & res_df$padj < p.threshold] <- "DOWN"
+
+res_df$labels <- NA
+res_df$labels[res_df$expression != "NO"] <- res_df$taxonomy[res_df$expression != "NO"]
+
+ggplot(res_df, aes(x = log2FoldChange, y = -log10(padj), col=expression, label=labels)) +
+  geom_point() +
+  theme_minimal() +
+  geom_vline(xintercept = c(-l2fc.threshold, l2fc.threshold), col = "red") + # log2FC threshold
+  geom_hline(yintercept = -log10(p.threshold), col = "blue") + # p threshold
+  geom_text_repel()
+
+```
+
+## Season and Material
+
+```{r, print = FALSE}
+
+dds.df_season <- phyloseq_to_deseq2(be.ps, ~ season)
+
+dds.s <- DESeq(dds.df_season)
+
+```
+
+```{r}
+
+res <- results(dds.s)
+
+res_df <- as.data.frame(res)
+res_df$taxonomy <- rownames(res_df)
+
+#hist(res_df$pvalue, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+p.threshold <- 0.05
+
+#hist(res_df$log2FoldChange, breaks = 50, col = "skyblue", main = "Distribution of Adjusted p-values")
+l2fc.threshold <- 0.5
+# if 1, the  abundance is doubled or halved between conditions
+
+res_df$expression <- "NO"
+res_df$expression[res_df$log2FoldChange > l2fc.threshold & res_df$padj < p.threshold] <- "Summer"
+res_df$expression[res_df$log2FoldChange < (-l2fc.threshold) & res_df$padj < p.threshold] <- "Fall"
+
+res_df$labels <- NA
+res_df$labels[res_df$expression != "NO"] <- res_df$taxonomy[res_df$expression != "NO"]
+
+ggplot(res_df, aes(x = log2FoldChange, y = -log10(padj), col=expression, label=labels)) +
+  geom_point() +
+  theme_minimal() +
+  geom_vline(xintercept = c(-l2fc.threshold, l2fc.threshold), col = "black", linetype = 'dashed') + # log2FC threshold
+  geom_hline(yintercept = -log10(p.threshold), col = "black", linetype = 'dashed') + # p threshold
+  ggtitle('Summer vs Fall Enrichment') +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  scale_color_manual(name="Enrichment",values=c("red", 'black',"blue"))+
+  geom_text_repel(show_guide=F)
+
+ggsave('Scripts/Bact.Euk/Res/BE_DE/summer_vs_fall.pdf', height = 7, width = 14)
+```
+
+## Per Date
+
+```{r, print = FALSE}
+
+dds.df_time <- phyloseq_to_deseq2(be.ps, ~ collection_date)
+
+dds.t <- DESeq(dds.df_time)
+
+```
+

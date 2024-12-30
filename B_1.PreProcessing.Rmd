@@ -1,0 +1,756 @@
+---
+title: "WHD_B_PreProcessing"
+output: html_notebook
+author: 'Francesca Barbieri'
+---
+
+```{r setup, include = FALSE, print = FALSE}
+
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/Francesca/Documents/INTERNSHIP/") 
+
+```
+
+```{r, echo = FALSE, include = FALSE, print = FALSE}
+
+library(readxl)
+library(dplyr)
+library(purrr)
+library(tidyverse)
+library(reshape2) # melt function
+library(plyr)
+
+library(ggplot2)
+library(ggfortify)
+
+library(pals)
+
+# Ecology package
+library(vegan)
+library(phyloseq)
+library(microbiome)
+
+```
+
+```{r, print = FALSE, include=FALSE}
+
+bact_init_classification <- read_excel('Data/WHD_data_files/WHD_data_files/WHD_Bv6_paired_ASV_run_4MSc/asv/taxonomy_dada2/taxonomy_assignment_noSingletons.xlsx', col_names = FALSE, na = "NA")
+
+```
+
+# OTU table
+
+```{r}
+
+# From the file.txt, the # has been deleted to allow the header names
+asv_table_bact <- read.table('Data/WHD_data_files/WHD_data_files/WHD_Bv6_paired_ASV_run_4MSc/asv/taxonomy_dada2/asvTable_noSingletons.txt', sep = '\t', header = TRUE)
+
+#asv_table_bact$OTU.ID <- paste0('b_', asv_table_bact$OTU.ID)
+rownames(asv_table_bact) <- asv_table_bact$OTU.ID
+
+asv_table_bact <- asv_table_bact[, !(names(asv_table_bact) %in% c("taxonomy", "OTU.ID"))]
+
+asv_table_bact <- t(asv_table_bact)
+# Rows = Samples
+# Columns = OTU
+
+# 25689 51
+
+```
+
+# Classification
+
+```{r, print = FALSE, include=FALSE}
+
+classification <- read_excel('Data/WHD_data_files/WHD_data_files/WHD_Bv6_paired_ASV_run_4MSc/asv/taxonomy_dada2/taxonomy_assignment_noSingletons.xlsx', col_names = FALSE, na = "NA")
+# TIBBLE 25689 x 26
+
+```
+
+```{r}
+
+classification <- classification[,!names(classification) %in% c('...2','...3','...4','...5', '...8', '...11', '...23', '...26')]
+
+# Checking entries
+# all(classification$...7 == 'domain') # TRUE
+# all(classification$...10 == 'phylum') # TRUE
+
+colnames(classification)[colnames(classification) == '...1'] <- 'OTU'
+colnames(classification)[colnames(classification) == '...6'] <- 'domain'
+colnames(classification)[colnames(classification) == '...9'] <- 'phylum'
+colnames(classification)[colnames(classification) == '...12'] <- 'class'
+colnames(classification)[colnames(classification) == '...15'] <- 'order'
+colnames(classification)[colnames(classification) == '...18'] <- 'family'
+
+# Remove chloroplasts
+chloroplasts <- subset(classification, grepl("Chloroplast", classification$class, ignore.case = TRUE))
+
+
+classification <- subset(classification, !grepl("Chloroplast", classification$class, ignore.case = TRUE))
+
+classification <- classification[,!names(classification) %in% c('...7', '...14', '...17', '...20', '...11')]
+
+head(classification)
+
+```
+
+## Chloroplasts
+
+```{r}
+
+#unique(chloroplasts$phylum) # Cyanobacteriota
+#unique(chloroplasts$class)  # Chloroplast
+#unique(chloroplasts$order)  # Chloroplast
+#unique(chloroplasts$family) # Bacillariophyta, Cryptomonadaceae, Euglenida,                                 Chlorarachniophyceae, Chlorophyta, Streptophyta,                               Bangiophyceae
+
+
+colnames(chloroplasts)[colnames(chloroplasts) == 'family'] <- 'genus'
+colnames(chloroplasts)[colnames(chloroplasts) == '...14'] <- 'class %'
+colnames(chloroplasts)[colnames(chloroplasts) == '...17'] <- 'fam %'
+colnames(chloroplasts)[colnames(chloroplasts) == '...20'] <- 'genus %'
+colnames(chloroplasts)[colnames(chloroplasts) == 'order'] <- 'family' 
+
+chloroplasts <- chloroplasts[,!names(chloroplasts) %in% c('...7', '...10', '...13', '...16', '...19', '...21', '...22', '...24', '...25')]
+
+head(chloroplasts)
+
+```
+
+## Archaea and eukaryotes
+
+Eukaryotes and archaea should be drop later anyway
+
+```{r}
+
+#unique(classification$domain) # FALSE
+
+archaea <- classification[grep('archaea', classification$domain, ignore.case = TRUE), ]
+
+eukaryota <- classification[grep('eukaryota', classification$domain, ignore.case = TRUE),]
+
+classification <- subset(classification, !grepl('archaea', classification$domain, ignore.case = TRUE))
+classification <- subset(classification, !grepl('eukaryota', classification$domain, ignore.case = TRUE))
+
+# unique(classification$domain) # Bacteria
+
+head(archaea)
+head(eukaryota)
+```
+
+## Main DF
+
+Matching 'unphased' entries.
+
+```{r}
+#unique(classification$...10) # phylum
+#unique(classification$...13) # class, genus, family
+
+to_match <- classification[classification$...13 != 'class',]
+
+classification <- classification[classification[['...13']] == 'class', ]
+#unique(classification$...13) # class
+
+#unique(classification$...16) # order, genus, family
+
+to_match <- classification[classification$...16 != 'order',]
+
+classification <- classification[classification$...16 == 'order', ]
+#unique(classification$...16) # order
+
+#unique(classification$...19) # family, genus, suborder
+
+to_match <- classification[classification$...19 != 'family',]
+
+classification <- classification[classification$...19 == 'family', ]
+#unique(classification$...19) # family
+
+#unique(classification$...22) #genus
+
+colnames(classification)[colnames(classification) == '...21'] <- 'genus'
+
+classification <- classification[,!names(classification) %in% c('...10', '...13','...16','...19','...22', '...24','...25','...26')]
+
+head(classification)
+# 23489 x 7 
+```
+
+```{r}
+
+# From family on
+#unique(to_match$...19) # genus, suborder
+
+#
+to_match_genus <- (split(to_match, to_match$...19))$genus
+
+#unique(to_match_genus$...19)  #genus
+#unique(to_match_genus$...22) # NA
+#unique(to_match_genus$...25) # NA
+
+colnames(to_match_genus)[colnames(to_match_genus) == 'family'] <- 'genus'
+to_match_genus <- to_match_genus[!(names(to_match_genus) %in% paste0("...", 19:26))]
+to_match_genus <- to_match_genus[,!names(to_match_genus) %in% c('...10','...13','...16')]
+
+taxonomy_classification_bact <- bind_rows(classification, to_match_genus)
+
+#
+to_match_suborder <- (split(to_match, to_match$...19))$suborder
+colnames(to_match_suborder)[colnames(to_match_suborder) == 'family'] <- 'suborder'
+colnames(to_match_suborder)[colnames(to_match_suborder) == '...21'] <- 'family'
+colnames(to_match_suborder)[colnames(to_match_suborder) == '...24'] <- 'genus'
+
+#unique(to_match_suborder$...19) # suborder
+#unique(to_match_suborder$...22) # family
+#unique(to_match_suborder$...25) # genus
+
+to_match_suborder <- to_match_suborder[,!names(to_match_suborder) %in% c('...10','...13','...16', '...19', '...22','...25')]
+
+taxonomy_classification_bact <- as.data.frame(bind_rows(taxonomy_classification_bact, to_match_suborder))
+taxonomy_classification_bact <- taxonomy_classification_bact[,!names(taxonomy_classification_bact) %in% c('suborder','...3','...5','...7','...9','...10','...11', '...13', '...15', '...4', '...6', '...8', '...12', '...14')]
+
+
+#prefix_b <- paste0('b_', taxonomy_classification_bact[,1])
+#row.names(taxonomy_classification_bact) <- prefix_b
+rownames(taxonomy_classification_bact) <- taxonomy_classification_bact[,1]
+taxonomy_classification_bact <- taxonomy_classification_bact[,-1]
+
+head(taxonomy_classification_bact)
+# 24461 OTU
+# 6 classification levels
+
+write.table(taxonomy_classification_bact, 'Data/bact.classification.txt')
+
+```
+
+# Metadata
+
+```{r}
+
+metadata <- read_excel('Data/WHD_data_files/WHD_data_files/WHD_MIMARKS_Table/WHD_Bv6_Ev4_2013_Metadata_treatment.xlsx',
+                       na = "NA")
+
+metadata <- as.data.frame(t(metadata))
+
+colnames(metadata) <- c('project_name', 'investigation_type', 'experimental_factor', 'geo_loc_name', 'lat_lon', 'collection_date','biome', 'feature', 'material', 'env_package', 'samp_collect_device', 'samp_size', 'nucl_acid_ext', 'lib_reads_seqd', 'lib_const_meth', 'target_gene', 'target_subfragment', 'seq_meth', 'pcr_primers', 'pcr_cond', 'seq_quality_check', 'sop', 'url', 'depth (m)', 'temp (C)', 'salinity (ppt)')
+
+rownames(metadata) <- substr(rownames(metadata), 1, 8)
+
+
+metadata$collection_date <- as.Date(as.numeric(metadata$collection_date), origin = "1899-12-30")
+
+metadata$collection_date <- as.factor(metadata$collection_date)
+```
+
+## Sample checking
+
+```{r}
+
+bact_sample.depth <- rowSums(asv_table_bact)
+bact_sample.depth <- bact_sample.depth[order(bact_sample.depth)]
+
+#summary(bact_sample.depth)
+#   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#  7431   46698   78266  225772  153531 2746325 
+
+# Cut off at 20.000 (?)
+
+b.metadata <- data.frame(sample = rownames(metadata), 
+                         collection_date = metadata$collection_date,
+                         sample_depth = bact_sample.depth,
+                         material = metadata$material)
+
+b.metadata <- b.metadata %>%
+  group_by(collection_date, material) %>%
+  mutate(replicates = dense_rank(paste(collection_date, material)))
+
+# They remain consistent per biological replicate
+
+```
+
+# Phyloseq object
+
+```{r}
+
+OTU_b = otu_table(as.matrix(asv_table_bact), taxa_are_rows = FALSE)
+SAM = sample_data(metadata) 
+TAX_b = tax_table(as.matrix(taxonomy_classification_bact))
+
+bact_phylo <- phyloseq(OTU_b, TAX_b, SAM)
+
+bact_phylo
+# 24461 taxa x 51 samples
+
+```
+
+# PRE-PROCESSING
+
+```{r}
+
+# Normalization
+bact_n <- transform_sample_counts(bact_phylo, function(x) x / sum(x))
+
+# Sequencing error filtering
+bact_nf <- filter_taxa(bact_n, function(x) {sum(x > 0) > 1 & max(x) > 0.01}, TRUE) 
+# 109
+
+# Normalization 
+bact_nfn <- transform_sample_counts(bact_nf, function(x) x / sum(x))
+
+# CLR
+bact_nfc <- microbiome::transform(bact_nf, "clr")
+
+```
+
+Using standard statistical methods on such data may lead to spurious results. Likewise, any data that are compositional in nature are interpreted into relative counts. Hence, using a CLR transformation allows the circumvention of these spurious results 
+
+```{r}
+
+taxa_names <- colnames(as.data.frame(bact_nf@otu_table))  # or use colnames() if it's in columns
+bact_f <- prune_taxa(taxa_names, bact_phylo)
+
+```
+
+
+## Rarefaction
+
+```{r, eval = FALSE}
+
+b_otu <- as.data.frame(bact_phylo@otu_table)
+
+b_min_read_sample <- min(rowSums(b_otu))
+b_min_sample_index <- which(rowSums(b_otu) == b_min_read_sample)
+#WHD_00070, 7431
+
+b_colors <- rep("lightblue", nrow(b_otu))
+b_colors[b_min_sample_index] <- "blue"
+
+#pdf('Scripts/Bacteria/Res/B_PreProcessing/B_rarefaction.pdf',10, 10)
+bact_rarecurve <- rarecurve(b_otu, step = 500, label = FALSE, cex = 0.75, las = 1, col = b_colors)
+abline(v = b_min_read_sample, lty = 'dashed', col = 'black')
+#dev.off()
+
+```
+
+```{r, eval = FALSE}
+
+min_read_sample <- min(rowSums(asv_table_bact))
+#WHD_00070, 7431
+
+s <- specnumber(asv_table_bact)
+bact_rarefied <- rarefy(asv_table_bact, min_read_sample)
+
+#pdf('Scripts/Bacteria/Res/B_PreProcessing/B_rarefied.species.pdf')
+plot(s, bact_rarefied, xlab = "Observed # Species", ylab = "Rarefied # Species", main = 'Rarefied species - Bacteria')
+abline(0,1)
+#dev.off()
+
+```
+
+
+# Graphs
+
+## PCA
+
+```{r}
+
+# CLR!
+
+otu <- as.data.frame(bact_nfc@otu_table)
+
+pca <- prcomp(otu)#, scale. = TRUE)
+
+otu$material <- metadata$material
+otu$collection_date <- metadata$collection_date
+
+autoplot(pca, data = otu, colour = 'collection_date', shape = 'material') +
+  ggtitle('PCA - Bacteria') +
+  theme_minimal()
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_PCA.pdf')
+
+```
+
+
+## Compositionality
+
+```{r, eval = FALSE}
+
+library(Polychrome)
+
+P40 <- createPalette(40, c("#a2da5a","#a877c8", "#a2b2df"), range = c(30, 80))
+P40 <- sortByHue(P40)
+P40 <- as.vector(t(matrix(P40, ncol=4)))
+
+bact_m <- psmelt(bact_nfn)
+material_lab <- setNames(bact_m$material, bact_m$Sample)
+
+ggplot(bact_m, aes(x = Sample, y = Abundance, fill = phylum)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(x = "Material", y = "Relative Abundance\n", fill = "Phylum") +
+  scale_fill_manual(values = P40) +
+  theme_bw() +
+  scale_y_continuous(labels = scales::percent) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.position = "bottom",
+    legend.box = "vertical",
+    legend.text = element_text(size = 12),
+    legend.title = element_text(size = 18),
+    plot.title = element_text(size = 20, hjust = 0.5, family = "sans")
+  ) +
+  scale_x_discrete(labels = material_lab) +
+  facet_wrap(~ collection_date, scales = "free_x", nrow = 1)
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_composition.pdf', height = 8, width = 15)
+
+```
+
+#### Pseudomonadota
+
+```{r}
+proteobacteria <- subset_taxa(bact_nfn, phylum == "Pseudomonadota")
+#83
+
+# Roseobacteraceae   22
+# Paracoccaceae   12
+# Halieaceae    4
+# Hyphomonadaceae    3
+
+taxonomy <- as.data.frame(tax_table(proteobacteria))
+
+taxonomy$family <- ifelse(
+  taxonomy$family %in% c("Roseobacteraceae", "Paracoccaceae", 'Hyphomonadaceae','Halieaceae'),  taxonomy$family,  # Keep these families
+  "Others")
+
+# Assign back to the phyloseq object
+tax_table(proteobacteria) <- as.matrix(taxonomy)
+
+
+```
+
+
+```{r}
+proteobacteria_rel <- transform_sample_counts(proteobacteria, function(x) x / sum(x))
+
+proteobacteria_family <- tax_glom(proteobacteria_rel, taxrank = "family")
+proteobacteria_family <- psmelt(proteobacteria_family)
+
+```
+
+```{r}
+
+P40 <- c('#C36B85', '#FB938F', '#F2CACB', '#FDBB75', 'lightgrey')
+
+ggplot(proteobacteria_family, aes(y = Sample, x = Abundance, fill = factor(family, levels = c("Roseobacteraceae", "Paracoccaceae", 'Hyphomonadaceae','Halieaceae', "Others")))) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_fill_manual(
+    values = P40,
+    breaks = c("Roseobacteraceae", "Paracoccaceae", 'Hyphomonadaceae','Halieaceae', "Others"),
+    drop = FALSE # Ensure all levels, even unrepresented ones, appear in the legend
+  ) +
+  scale_x_continuous(labels = scales::percent) +
+  labs(y = "Sample", x = "Relative Abundance (%)", fill = "Family") +
+  theme_bw()+
+   theme(
+    axis.text.y = element_text(size = 8),
+    axis.text.x = element_text(size = 8, angle = 0),
+    legend.position = 'none'
+  ) +
+  scale_y_discrete(labels = material_lab) +
+  facet_wrap(~ collection_date, scales = "free_y", ncol = 1)
+
+
+ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_proteobacteria.pdf', height = 15, width = 5)
+
+```
+
+
+
+## Richness
+
+```{r}
+
+plot_richness(bact_f, "material", measures= 'Shannon', color = 'material') +
+  geom_boxplot(outlier.shape = NA, alpha = 0.5) + 
+  geom_jitter(width = 0.2, size = 2, alpha = 0.7) +  
+  stat_summary(fun = mean, geom = "point", color = "black", size = 1.5) +  # mean points
+  facet_wrap(~ collection_date, scales = 'fixed', nrow = 1) +
+  scale_color_brewer(palette = "Set1") +  
+  labs(y = "Shannon Index", x = NULL) +
+  theme_bw() +
+  theme(
+    strip.text = element_text(size = 12),
+    legend.position = "bottom",
+    axis.text.x = element_blank()
+  )
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_Shannon.richness.pdf', width = 40, height = 20, units = "cm")
+
+```
+
+```{r}
+
+plot_richness(bact_f, "material", measures= 'Observed', color = 'material') +
+  geom_boxplot(outlier.shape = NA, alpha = 0.5) + 
+  geom_jitter(width = 0.2, size = 2, alpha = 0.7) +  
+  stat_summary(fun = mean, geom = "point", color = "black", size = 1.5) +  # mean points
+  facet_wrap(~ collection_date, scales = 'fixed', nrow = 1) +
+  scale_color_brewer(palette = "Set1") +  
+  labs(y = "Observed Richness", x = NULL) +
+  theme_bw() +
+  theme(
+    strip.text = element_text(size = 12),
+    legend.position = "bottom",
+    axis.text.x = element_blank()
+  )
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_observed.richness.pdf', width = 60, height = 30, units = "cm")
+
+```
+
+
+```{r}
+
+# Chao2
+
+library(fossil)
+
+otu <- as.data.frame(bact_f@otu_table)
+
+# Chao2 per sample
+c2 <- apply(otu, 1, chao2)
+
+sample_data(bact_f)$chao2 <- c2
+
+ggplot(sample_data(bact_f), aes(x = material, y = chao2, color = material)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.5) + 
+  geom_jitter(width = 0.2, size = 2, alpha = 0.7) +  
+  stat_summary(fun = mean, geom = "point", color = "black", size = 1.5) +  # mean points
+  facet_wrap(~ collection_date, scales = 'fixed', nrow = 1) +
+  scale_color_brewer(palette = "Set1") +  
+  labs(y = "Chao2 Index", x = NULL) +
+  theme_bw() +
+  theme(
+    strip.text = element_text(size = 12),
+    legend.position = "bottom",
+    axis.text.x = element_blank()
+  )
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_Chao2.richness.pdf', width = 40, height = 20, units = "cm")
+
+```
+
+
+
+## PCoA
+
+```{r}
+
+# Jaccard
+pcoa <- ordinate(bact_nfn, method = "PCoA", distance = "jaccard")
+plot_ordination(bact_nfn, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCoA1 [22.7%]') +
+  #ylab('PCoA2 [13.9%]') +
+  ggtitle('Pricipal Coordinate Analysis - Jaccard')
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_PCoA_jcrd.pdf')
+
+# Horn
+pcoa <- ordinate(bact_nfn, method = "PCoA", distance = "horn")
+plot_ordination(bact_nfn, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCoA1 [41.5%]') +
+  #ylab('PCoA2 [23.8%]') +
+  ggtitle('Pricipal Coordinate Analysis - Horn')
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_PCoA_horn.pdf')
+
+# Morisita
+pcoa <- ordinate(bact_nfn, method = "PCoA", distance = "morisita")
+plot_ordination(bact_nfn, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCoA1 [2%]') +
+  #ylab('PCoA2 [2%]') +
+  ggtitle('Pricipal Coordinate Analysis - Morisita')
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_PCoA_morisita.pdf')
+
+# Bray-Curtis
+pcoa <- ordinate(bact_nfn, method = "PCoA", distance = "bray")
+plot_ordination(bact_nfn, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 4) +
+  scale_color_brewer(palette = "RdBu") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 20, hjust = 0.5, family = "sans")
+  ) +
+  xlab('PCo1 [32.7%]') +
+  ylab('PCo2 [16.8%]') +
+  ggtitle('PCoA - Bray-Curtis')
+  
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_PCoA_bray.pdf')
+
+
+```
+
+### No normalization
+
+```{r}
+
+# Jaccard
+pcoa <- ordinate(bact_phylo, method = "PCoA", distance = "jaccard")
+plot_ordination(bact_phylo, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCoA1 [18.7%]') +
+  #ylab('PCoA2 [12.7%]') +
+  ggtitle('Pricipal Coordinate Analysis - Jaccard (Not normalizad)')
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_PCoA_jcrd_NOTnorm.pdf')
+
+
+# Bray-Curtis
+pcoa <- ordinate(bact_phylo, method = "PCoA", distance = "bray")
+plot_ordination(bact_phylo, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 4) +
+  scale_color_brewer(palette = "RdBu") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 20, hjust = 0.5, family = "sans")
+  ) +
+  #xlab('PCo1 [29%]') +
+  #ylab('PCo2 [15.9%]') +
+  ggtitle('PCoA - Bray-Curtis')
+  
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_PCoA_bray_NOTnorm.pdf')
+
+
+# Horn
+pcoa <- ordinate(bact_phylo, method = "PCoA", distance = "horn")
+plot_ordination(bact_phylo, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCoA1 [37%]') +
+  #ylab('PCoA2 [21.6%]') +
+  ggtitle('Pricipal Coordinate Analysis - Horn (Not normalizad)')
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_PCoA_horn_NOTnorm.pdf')
+
+
+# Morisita
+pcoa <- ordinate(bact_phylo, method = "PCoA", distance = "morisita")
+plot_ordination(bact_phylo, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCoA1 [37.1%]') +
+  #ylab('PCoA2 [21.1%]') +
+  ggtitle('Pricipal Coordinate Analysis - Morisita(Not normalizad)')
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_PCoA_morisita_NOTnorm.pdf')
+
+```
+
+## NMDS
+
+```{r}
+
+# Jaccard
+nmds <- ordinate(bact_nfn, method = "NMDS", distance = "jaccard")
+saveRDS(nmds, 'Scripts/Bacteria/Res/B_PreProcessing/NMDS_stress/B_NMDS.jcrd.rds')
+plot_ordination(bact_nfn, nmds, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  ggtitle('NMDS - Jaccard')
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_NMDS.jcrd.pdf')
+
+
+# Horn
+nmds <- ordinate(bact_nfn, method = "NMDS", distance = "horn")
+saveRDS(nmds, 'Scripts/Bacteria/Res/B_PreProcessing/NMDS_stress/B_NMDS.horn.rds')
+plot_ordination(bact_nfn, nmds, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  ggtitle('NMDS - Horn')
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_NMDS.horn.pdf')
+
+
+# Bray-Curtis
+
+nmds <- ordinate(bact_nfn, method = "NMDS", distance = "bray")
+saveRDS(nmds, 'Scripts/Bacteria/Res/B_PreProcessing/NMDS_stress/B_NMDS.bray.rds')
+plot_ordination(bact_nfn, nmds, color="collection_date", shape = 'material') +
+  geom_point(size = 4) +
+  scale_color_brewer(palette = "RdBu") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 20, hjust = 0.5, family = "sans")
+  ) +
+  #facet_wrap(~ collection_date, scales = 'free_x') +
+  annotate("text", x = -Inf, y = Inf, label = "Stress = 0.118", hjust = -0.1, vjust = 1.5, size = 5, color = "black")
+  ggtitle('Bacteria NMDS')
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_NMDS.bray.pdf',height = 7, width = 9)
+  
+```
+
+### No normalization
+
+```{r}
+
+# Jaccard
+nmds <- ordinate(bact_phylo, method = "NMDS", distance = "jaccard")
+saveRDS(nmds, 'Scripts/Bacteria/Res/B_PreProcessing/NMDS_stress/B_NMDS.jcrd_NOTnorm.rds')
+plot_ordination(bact_phylo, nmds, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  ggtitle('NMDS - Jaccard (Not normalizad)')
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_NMDS_NOTnorm.jcrd.pdf')
+
+
+# Horn
+nmds <- ordinate(bact_phylo, method = "NMDS", distance = "horn")
+saveRDS(nmds, 'Scripts/Bacteria/Res/B_PreProcessing/NMDS_stress/B_NMDS_NOTnorm.horn.rds')
+plot_ordination(bact_phylo, nmds, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  ggtitle('NMDS - Horn (Not normalizad)')
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_NMDS.horn_NOTnorm.pdf')
+
+
+# Bray-Curtis
+
+nmds <- ordinate(bact_phylo, method = "NMDS", distance = "bray")
+saveRDS(nmds, 'Scripts/Bacteria/Res/B_PreProcessing/NMDS_stress/B_NMDS_NOTnorm.bray.rds')
+plot_ordination(bact_phylo, nmds, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  ggtitle('NMDS - Bray-Curtis (Not normalizad)')
+
+#ggsave('Scripts/Bacteria/Res/B_PreProcessing/B_NMDS.bray_NOTnorm.pdf')
+  
+
+```
+
+# Saves
+
+```{r}
+
+# PHYLOSEQ OBJECTS
+saveRDS(bact_phylo, 'Scripts/Bacteria/Res/B_PreProcessing/bact_phylo.rds')
+saveRDS(bact_n, 'Scripts/Bacteria/Res/B_PreProcessing/bact_n.rds')
+saveRDS(bact_nf, 'Scripts/Bacteria/Res/B_PreProcessing/bact_nf.rds')
+saveRDS(bact_nfn, 'Scripts/Bacteria/Res/B_PreProcessing/bact_nfn.rds')
+
+```
+
+
+
+
+
+
+
+

@@ -1,0 +1,908 @@
+---
+title: "WHD_E_SpiecEasi"
+output: html_notebook
+---
+
+```{r setup, include = FALSE, print = FALSE}
+
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/Francesca/Documents/INTERNSHIP/") 
+
+```
+
+```{r, echo = FALSE, include = FALSE, print = FALSE}
+
+library(readxl)
+library(dplyr)
+library(purrr)
+library(tidyverse)
+library(reshape2) # melt function
+library(stats)
+library(cluster)
+
+library(RColorBrewer)
+
+# Plotting
+library(ggplot2)
+library(ggfortify)
+library(pheatmap)
+
+# Ecology package
+library(vegan)
+library(phyloseq)
+library(microbiome)
+
+# SPIEC-EASI
+library(SpiecEasi)
+library(igraph)
+library(Matrix)
+
+```
+
+```{r}
+
+# aIDA
+e.f <- readRDS('Scripts/phyloseq.objects/euk.ps_no.agglomeration.rds') # 68
+
+euk_aIDA_resMat <- read.table('Scripts/Eukaryotes/Res/E_aIDA/E_resMat.5_no.agglomeration.tsv')
+melted_aIDA <- melt(euk_aIDA_resMat)
+
+
+```
+
+# Taxa color
+
+```{r}
+
+# Colors per phylum
+taxa.table <- tax_table(e.f)
+
+phyla <- as.character(taxa.table[, "phylum"])
+unique.phyla <- unique(phyla) # list of phylum
+# metazoa, gyrista rhodophyta ciliophora cercozoa centroplasthelida choanoflagellata bigyra
+
+custom_colors <- c("#2e5158", # Metazoa
+                   "#6095eb", # Gyrista
+                   "#e69477", # Rhodophyta
+                   '#16fbfa', # Ciliophora
+                   "#fe00e0", #Cercozoa
+                   "#fc1a0f", # Centroplasthelida
+                   '#f5e50d', # Choanoflagellata
+                   '#1c8b16') # Bigyra
+
+phylum.color <- setNames(custom_colors, unique.phyla)
+
+
+```
+
+
+# No agglomeration
+
+```{r}
+
+euks.spieceasi <- readRDS('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_spieceasi_no.agglomeration.rds')
+
+euks <- e.f # PHYLOSEQ OBJECT
+otu <- as.data.frame(otu_table(euks))
+
+```
+
+
+## Adj matrix
+
+```{r}
+
+set.seed(2121)
+
+# getRefit = the optimal (StARS-refit) network
+adj.mat <- as.matrix(getRefit(euks.spieceasi))
+colnames(adj.mat)<- row.names(adj.mat) <- colnames(otu)
+
+# igraph object
+euks.gl <- adj2igraph(adj.mat)
+
+V(euks.gl)$name <- colnames(adj.mat)
+vsize <- rowMeans(clr(otu),1)+6 # Vertex
+
+# Colors
+taxa.table <- tax_table(euks)
+phyla <- as.character(taxa.table[, "phylum"])
+vertex.colors <- sapply(phyla, function(x) phylum.color[x])
+
+LO = layout.fruchterman.reingold(euks.gl)
+
+# All taxa included
+plot(euks.gl, 
+     layout = LO, 
+     vertex.size = vsize, 
+     vertex.color = vertex.colors,
+     main=" SpiecEasi Eukaryotes- Glasso")
+
+```
+
+```{r}
+
+# Remove isolated nodes
+
+set.seed(2121)
+
+isolated <- V(euks.gl)[igraph:::degree(euks.gl) == 0]
+G2 <- delete.vertices(euks.gl, isolated)
+LO2 <- layout.fruchterman.reingold(G2)
+
+# Vertex color matched
+vertex.G2 <- V(G2)$name
+vertex.colors.G2 <- vertex.colors[match(vertex.G2, V(euks.gl)$name)]
+
+#pdf('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_circle.isolated_no.agglomeration.pdf', height = 30, width = 30)
+plot(
+  G2, 
+  layout = LO2, 
+  vertex.size = vsize * 2, 
+  vertex.color = vertex.colors.G2, 
+  
+  vertex.label.color = "black",     
+  vertex.label.cex = 0.8,             
+  vertex.label.family = "sans",       
+  main = "Eukaryotes - no agglomeration"
+)
+#dev.off()
+
+```
+
+## Weighted Adj Matrix
+
+```{r}
+
+# Weighted network
+cov.mat <- as.matrix(getOptCov(euks.spieceasi)) # COVARIANCE MATRIX
+colnames(cov.mat)<- row.names(cov.mat) <- colnames(otu)
+
+se.cor <- cov2cor(cov.mat) # CORRELATION MATRIX
+weighted.adj.mat <- se.cor*adj.mat
+weighted.adj.mat <- round(as.matrix(se.cor*adj.mat),5)
+
+# Removing rows and columns with 0
+r <- apply(weighted.adj.mat, 1, function(row) any(row != 0))
+c <- apply(weighted.adj.mat, 2, function(col) any(col != 0))
+
+w.adj.mat <- weighted.adj.mat[r, c]
+
+```
+
+```{r}
+
+ get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+
+lower_tri <- get_upper_tri(w.adj.mat)
+
+melted_cormat <- melt(lower_tri, na.rm = TRUE)
+
+# Heatmap
+
+ggplot(data = melted_cormat, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(
+    low = "blue", high = "red", mid = "lightgrey",
+    midpoint = 0, limit = c(-0.25, 0.25), space = "Lab",
+    name = "SE value"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 1, size = 12, hjust = 1),
+    axis.text.y = element_text(size = 12)
+  ) +
+  scale_y_discrete(position = "right") +            # Move y-axis labels to the right
+  coord_fixed() +
+  labs(x = "Variable 1", y = "Variable 2") + # Rename axes
+  geom_text(aes(label = ifelse(value != 0, round(value, 2), "")), size = 3)
+
+#ggsave('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_heatmap_no.agglomeration.pdf', height = 17, width = 17)
+
+```
+
+
+```{r}
+
+grph <- adj2igraph(weighted.adj.mat)
+
+# Node list
+V(grph)$name <- colnames(otu)
+V(grph)$size <- (igraph:::degree(grph) + 1) # the +1 is to avoid size zero vertices
+V(grph)$color <- "grey"
+
+#Edges = values in the weighted.adj.mat
+E(grph)$color <- 'green' # POSITIVE
+E(grph)$color[E(grph)$weight<0] <- 'red'#NEGATIVE
+E(grph)$width <- abs(E(grph)$weight)*10
+
+#pdf('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_ircleInteractions.pdf', height = 7, width = 7)
+plot(grph,
+     vertex.label.color = "black",     
+     vertex.label.cex = 0.8,            
+     vertex.label.family = "sans",  
+     vertex.color = phylum.color,
+     layout=layout.circle(grph))
+#dev.off()
+
+```
+
+```{r}
+
+# Remove isolated nodes
+set.seed(2121)
+
+isolated <- V(grph)[igraph:::degree(grph) == 0]
+G2 <- delete.vertices(grph, isolated)
+
+#LO2 <- layout.fruchterman.reingold(G2)
+
+vertex.G2 <- V(G2)$name
+vertex.colors.G2 <- vertex.colors[match(vertex.G2, V(grph)$name)]
+
+
+#pdf('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_no.agg_circle.isolated.weighted.pdf', height = 40, width = 40)
+plot(G2, 
+     #vertex.shape = 'square',
+     #layout = LO2, 
+     
+     vertex.size = vsize*2.4,
+     vertex.color = vertex.colors.G2,
+     
+     vertex.label.cex = 1.7,
+     vertex.label.family = 'sans',
+     vertex.label.color = 'black',
+     
+     
+     edge.width = E(G2)$width*20)
+
+
+# Legend for phyla colors
+legend("topleft", 
+       legend = unique.phyla, 
+       fill = phylum.color, 
+       title = "Phylum",
+       cex = 3)  # Adjust size of legend text
+
+#dev.off()
+
+```
+
+## Covariance Matrix Interactions
+
+```{r}
+
+secorEuks  <- cov2cor(cov.mat)
+
+euks.spieceasi.gl <- triu(secorEuks*adj.mat, k=1)
+melted_SE <- melt(as.matrix(euks.spieceasi.gl))
+melted_SE <- melted_SE[melted_SE$value != 0, ]
+colnames(melted_SE) <- c('Var1', 'Var2', 'Value.SE')
+
+melted_SE
+# 98 ineractions 
+
+```
+
+```{r}
+
+ggplot(melted_SE, aes(Value.SE)) +
+  geom_histogram(binwidth = 0.01, fill = "blue", color = "black") +
+  labs(title = "Histogram of SE - Eukaryotes", x = "SE value", y = "Frequency") +
+  theme_minimal()
+
+```
+
+#### Taxonomy comparison
+
+```{r}
+
+# For plotting purposes
+
+euk.rel <- transform_sample_counts(e.f, function(x) x / sum(x))
+
+otu <- as.data.frame(euk.rel@otu_table)
+
+otu$SampleID <- rownames(otu)
+
+otu_plot <- otu %>% 
+  pivot_longer(cols = -c(SampleID), names_to = "ASV", values_to = "Abundance")
+# Includes the important variables considered
+
+```
+
+```{r, eval = FALSE}
+
+plots <- list()
+
+samples <- readRDS('Scripts/timematerialreplicate.rds')
+
+for (i in 1:nrow(melted_SE)) {
+  
+  ASV1 <- melted_SE$Var1[i]
+  ASV2 <- melted_SE$Var2[i]
+  
+  asv_to_plot <- c(ASV1, ASV2)
+  
+  p <- otu_plot %>% 
+    filter(ASV %in% asv_to_plot)
+  
+  plot <- ggplot(p, aes(x = SampleID, y = Abundance, color = ASV)) +
+    geom_line(aes(group = ASV)) +
+    theme_bw() +
+    scale_x_discrete(labels = samples) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+    labs(x = 'Sample', y = "Relative abundance") 
+  
+   plots[[paste(ASV1, ASV2, sep = "-")]] <- plot
+   
+   #ggsave(path = 'Scripts/Eukaryotes/Res/E_SPIEC-EASI/raw.abundances/',          filename = paste0("E_", ASV1, '_vs_', ASV2, ".pdf"),          plot = plot, height = 10, width = 15)
+
+}
+
+edg_plots <- plots
+# 98
+
+edg_plots
+```
+
+```{r}
+
+taxonomies <- as.data.frame(tax_table(e.f))
+
+se <- melted_SE
+
+e.positive <- se[se$Value.SE > 0, ]
+# 83
+  
+e.negative <- se[se$Value.SE < 0, ]
+# 15
+
+```
+
+##### Positive
+
+```{r}
+
+# Positive = highly correlated interactions
+
+# Unique ASV present
+asvs <- unique(c(e.positive$Var1, e.positive$Var2)) #68
+
+# Assign taxonomies to each unique ASV
+tax.positive <- taxonomies[rownames(taxonomies) %in% asvs, ]
+
+tax.positive$combined <- paste(tax.positive$division, tax.positive$phylum, 
+                     tax.positive$class, tax.positive$order,
+                     tax.positive$family, tax.positive$genus,
+                     tax.positive$species)
+
+
+e.positive <- merge(e.positive, tax.positive['combined'], by.x = "Var2", by.y = "row.names")
+names(e.positive)[names(e.positive) == "combined"] <- 'Tax2'
+
+e.positive <- merge(e.positive, tax.positive['combined'], by.x = "Var1", by.y = "row.names")
+names(e.positive)[names(e.positive) == "combined"] <- 'Tax1'
+
+# If the two taxonomies are the same, then merge them together
+e.positive.merged <- e.positive %>%
+  mutate(Merged = ifelse(Tax1 == Tax2, Tax1, NA)) %>%
+  filter(!is.na(Merged))
+
+# 13 taxonomies, 6 unique taxonomies:
+# 16, 21, 37
+# 19, 27
+# 2, 17
+# 3, 29, 36, 102
+# 35, 50
+# 51, 66, 74
+
+```
+
+###### Agglomeration
+
+```{r}
+
+# The first OTU is used for the summed version and the value in archetype will be used as the index-name for the new species.
+
+e.asv <- c('G.Stentor.16', 'G.Stentor.21', 'G.Stentor.37') #
+e.agg <- merge_taxa(e.f, e.asv)
+# 66
+
+e.asv <- c('S.Leathesia_difformis.19', 'S.Leathesia_difformis.27')
+e.agg <- merge_taxa(e.agg, e.asv)
+# 65
+
+e.asv <- c('G.Cymbella.2', 'G.Cymbella.17') #
+e.agg <- merge_taxa(e.agg, e.asv)
+# 64
+
+e.asv <- c('S.Microporella_ciliata.3', 'S.Microporella_ciliata.29', 'S.Microporella_ciliata.36', 'S.Microporella_ciliata.102')
+e.agg <- merge_taxa(e.agg, e.asv)
+# 60
+
+e.asv <- c('S.Navicula_brockmannii.35', 'S.Navicula_brockmannii.50')
+e.agg <- merge_taxa(e.agg, e.asv)
+# 59
+
+e.asv <- c('G.Hyalodiscus.51', 'G.Hyalodiscus.66', 'G.Hyalodiscus.74')
+e.agg <- merge_taxa(e.agg, e.asv)
+# 58
+
+saveRDS(e.agg, 'Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_agglomerated.ps.rds')
+
+```
+
+```{r}
+
+#ASV1 <- 'S.Microporella_ciliata.3'
+#ASV2 <- 'S.Microporella_ciliata.36'
+#ASV3 <- 'S.Microporella_ciliata.29'
+#ASV4 <- 'S.Microporella_ciliata.102'
+
+#ASV1 <- 'G.Stentor.16'
+#ASV2 <- 'G.Stentor.21'
+#ASV3 <- 'G.Stentor.37'
+
+#ASV1 <- 'S.Navicula_brockmannii.35'
+#ASV2 <- 'S.Navicula_brockmannii.50'
+
+#ASV1 <- 'G.Cymbella.2'
+#ASV2 <- 'G.Cymbella.17'
+
+ASV1 <- 'S.Leathesia_difformis.19'
+ASV2 <- 'S.Leathesia_difformis.27'
+
+#ASV1 <- 'G.Hyalodiscus.51'
+#ASV2 <- 'G.Hyalodiscus.66'
+#ASV3 <- 'G.Hyalodiscus.74'
+  
+asv_to_plot <- c(ASV1, ASV2)
+
+p <- otu_plot %>% 
+  filter(ASV %in% asv_to_plot)
+
+ggplot(p, aes(x = SampleID, y = Abundance, color = ASV)) +
+    geom_line(aes(group = ASV)) +
+    labs(x = "Sample", y = " Relative Abundance") +
+    ggtitle(paste('Relative Abundance of', ASV1, 'and', ASV2))+
+    #facet_wrap(~Time) +  # Wrap by 'Material'
+    theme_minimal() +
+    scale_x_discrete(labels = samples) +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#ggsave('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_Leathesia_difformis.pdf', height = 5, width = 10)
+  
+```
+
+##### Negative
+
+```{r}
+
+# Negative = anticorrealted
+
+asvs.n <- unique(c(e.negative$Var1, e.negative$Var2)) # 16
+
+tax.negative <- taxonomies[rownames(taxonomies) %in% asvs, ]
+
+tax.negative$combined <- paste(tax.negative$division, tax.negative$phylum, 
+                     tax.negative$class, tax.negative$order,
+                     tax.negative$family, tax.negative$genus,
+                     tax.negative$species)
+
+
+e.negative <- merge(e.negative, tax.negative['combined'], by.x = "Var2", by.y = "row.names")
+names(e.negative)[names(e.negative) == "combined"] <- 'Tax2'
+
+e.negative <- merge(e.negative, tax.negative['combined'], by.x = "Var1", by.y = "row.names")
+names(e.negative)[names(e.negative) == "combined"] <- 'Tax1'
+
+
+# If the two taxonomies are the same, then merge them together
+e.negative.merged <- e.negative %>%
+  mutate(Merged = ifelse(Tax1 == Tax2, Tax1, NA)) %>%
+  filter(!is.na(Merged))
+
+e.negative.merged
+# NO TAXONOMY DETECTED
+
+```
+
+##### Statistics
+
+```{r}
+
+se <- anti_join(se, e.positive.merged, by = c('Var1', 'Var2', 'Value.SE'))
+se$Label <- ifelse(se$Value.SE > 0, "Positive", "Negative")
+
+e.positive.merged$Label <- 'Positive and Same Taxonomies'
+e.positive.merged <- e.positive.merged %>% 
+  select(-Tax1, -Tax2, -Merged)
+
+se <- rbind(se, e.positive.merged)
+
+lab <- table(se$Label)
+# Negative Positive Positive and Same Taxonomies 
+#       15      70                           13
+
+#pdf('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_piechart.pdf')
+pie(lab, labels = names(lab), main = "Pie Chart of Positive and Negative Values")
+#dev.off()
+
+```
+
+
+# After Agglomeration
+
+```{r}
+
+euks.spieceasi <- readRDS('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_spieceasi_after.agglomeration.rds')
+
+e.agg <- readRDS('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_agglomerated.ps.rds')
+
+euks <- e.agg # PHYLOSEQ OBJECT
+otu <- as.data.frame(otu_table(euks))
+
+```
+
+## Adj matrix
+
+```{r}
+
+set.seed(2121)
+
+# getRefit = the optimal (StARS-refit) network
+adj.mat <- as.matrix(getRefit(euks.spieceasi))
+colnames(adj.mat)<- row.names(adj.mat) <- colnames(otu)
+
+# igraph object
+euks.gl <- adj2igraph(adj.mat)
+
+LO <- layout.fruchterman.reingold(euks.gl)
+
+V(euks.gl)$name <- colnames(adj.mat)
+vsize <- rowMeans(clr(otu),1)+6 # Vertex
+
+# Colors
+taxa.table <- tax_table(euks)
+phyla <- as.character(taxa.table[, "phylum"])
+vertex.colors <- sapply(phyla, function(x) phylum.color[x])
+
+LO = layout.fruchterman.reingold(euks.gl)
+
+#pdf('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_circle.pdf', height = 15, width = 15)
+plot(euks.gl, 
+     layout = LO, 
+     vertex.size = vsize, 
+     vertex.color = vertex.colors,
+     main=" SpiecEasi Eukaryotes- Glasso")
+#dev.off()
+
+```
+
+```{r}
+
+# Remove isolated nodes
+
+set.seed(2121)
+
+isolated <- V(euks.gl)[degree(euks.gl) == 0]
+G2 <- delete.vertices(euks.gl, isolated)
+LO2 <- layout.fruchterman.reingold(G2)
+
+# Vertex color matched
+vertex.G2 <- V(G2)$name
+vertex.colors.G2 <- vertex.colors[match(vertex.G2, V(euks.gl)$name)]
+
+#pdf('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_circle.isolated_after.agglomeration.pdf', height = 30, width = 30)
+plot(
+  G2, 
+  layout = LO2, 
+  vertex.size = vsize * 2, 
+  vertex.color = vertex.colors.G2, 
+  
+  vertex.label.color = "black",     
+  vertex.label.cex = 0.8,             
+  vertex.label.family = "sans",       
+  main = "Eukaryotes - After agglomeration")
+#dev.off()
+```
+
+## Weighted Adj Matrix
+
+```{r}
+
+# Weighted network
+cov.mat <- as.matrix(getOptCov(euks.spieceasi)) # COVARIANCE MATRIX
+colnames(cov.mat)<- row.names(cov.mat) <- colnames(otu)
+
+se.cor <- cov2cor(cov.mat) # CORRELATION MATRIX
+weighted.adj.mat <- se.cor*adj.mat
+weighted.adj.mat <- round(as.matrix(se.cor*adj.mat),5)
+
+# Removing rows and columns with 0
+r <- apply(weighted.adj.mat, 1, function(row) any(row != 0))
+c <- apply(weighted.adj.mat, 2, function(col) any(col != 0))
+
+w.adj.mat <- weighted.adj.mat[r, c]
+
+```
+
+```{r}
+
+ get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+  }
+
+lower_tri <- get_upper_tri(w.adj.mat)
+
+melted_cormat <- melt(lower_tri, na.rm = TRUE)
+
+# Heatmap
+
+ggplot(data = melted_cormat, aes(Var2, Var1, fill = value)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient2(
+    low = "blue", high = "red", mid = "lightgrey",
+    midpoint = 0, limit = c(-0.25, 0.25), space = "Lab",
+    name = "SE value"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 1, size = 12, hjust = 1),
+    axis.text.y = element_text(size = 12)
+  ) +
+  scale_y_discrete(position = "right") +            # Move y-axis labels to the right
+  coord_fixed() +
+  labs(x = "Variable 1", y = "Variable 2") + # Rename axes
+  geom_text(aes(label = ifelse(value != 0, round(value, 2), "")), size = 3)
+
+#ggsave('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_heatmap_after.agglomeration.pdf', height = 17, width = 17)
+
+```
+
+```{r}
+
+grph <- adj2igraph(weighted.adj.mat)
+
+# Node list
+V(grph)$name <- colnames(otu)
+V(grph)$size <- (degree(grph) + 1) # the +1 is to avoid size zero vertices
+V(grph)$color <- "grey"
+
+#Edges = values in the weighted.adj.mat
+E(grph)$color <- 'green' # POSITIVE
+E(grph)$color[E(grph)$weight<0] <- 'red'#NEGATIVE
+E(grph)$width <- abs(E(grph)$weight)*10
+
+#pdf('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_ircleInteractions.pdf', height = 7, width = 7)
+plot(grph,
+     vertex.label.cex=0.5,
+     vertex.label.color="black",
+     vertex.color = vertex.colors,
+     layout=layout.circle(grph))
+#dev.off()
+
+```
+
+```{r}
+
+# Remove isolated nodes
+set.seed(2121)
+
+isolated <- V(grph)[degree(grph) == 0]
+G2 <- delete.vertices(grph, isolated)
+
+#LO2 <- layout.fruchterman.reingold(G2)
+
+vertex.G2 <- V(G2)$name
+vertex.colors.G2 <- vertex.colors[match(vertex.G2, V(grph)$name)]
+
+
+pdf('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_circle.isolated.weighted_after.agglomeration.pdf', height = 40, width = 40)
+plot(G2, 
+     #vertex.shape = 'square',
+     #layout = LO2, 
+     
+     vertex.size = vsize*2.3,
+     vertex.color = vertex.colors.G2,
+     
+     vertex.label.cex = 2,
+     vertex.label.family = 'sans',
+     vertex.label.color = 'black',
+     
+     
+     edge.width = E(G2)$width*20)
+
+# Legend for phyla colors
+legend("bottomleft", 
+       legend = unique.phyla, 
+       fill = phylum.color, 
+       title = "Phylum",
+       cex = 3)  # Adjust size of legend text
+
+dev.off()
+
+```
+
+
+## Edges
+
+```{r}
+
+grph <- adj2igraph(w.adj.mat)
+
+# Node list
+V(grph)$name <- colnames(w.adj.mat)
+V(grph)$size <- igraph:::degree(grph) + 1 # the +1 is to avoid size zero vertices
+V(grph)$color <- "grey"
+
+#Edges = values in the weighted.adj.mat
+E(grph)$color <- 'green' # POSITIVE
+E(grph)$color[E(grph)$weight<0] <- 'red'#NEGATIVE
+E(grph)$width <- abs(E(grph)$weight)*10
+
+#pdf('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E.names_circleInteractions.pdf', height = 7, width = 7)
+plot(grph,
+     vertex.label.cex=0.5,
+     vertex.label.color="black",
+     layout=layout.circle(grph))
+#dev.off()
+
+```
+
+```{r}
+
+df <- as_data_frame(grph, what = 'both')
+edg <- df$edges
+
+edg <- edg %>%
+  select(-color, -width) %>%
+  mutate(quantile = ntile(weight, 4))
+
+write.table(edg, file = 'Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_edges.tsv', sep = "\t")
+
+```
+
+```{r}
+
+# Working with only the upper and lower quantile, stronger interactions
+e <- edg %>%
+  subset(quantile == c(1,4))
+# 41
+
+e_vertices <- unique(c(e$from, e$to))
+e.grph <- subgraph(grph, e_vertices)
+
+E(e.grph)$color <- 'green' # POSITIVE
+E(e.grph)$color[E(e.grph)$weight<0] <- 'red'#NEGATIVE
+
+#pdf('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E.low.up.q.names_interactions.pdf', height = 15, width = 15)
+plot(e.grph)
+#dev.off()
+
+#pdf('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E.low.up.q.names_circleInteractions.pdf', height = 15, width = 15)
+plot(e.grph,
+     vertex.label.cex=0.5,
+     vertex.label.color="black",
+     layout=layout.circle(e.grph))
+#dev.off()
+
+```
+
+```{r}
+
+asvs <- unique(c(e$from, e$to)) # 16
+e.f <- otu_table(e.agg.2)[,asvs]
+e.f <- merge_phyloseq(e.f, tax_table(e.agg.2), sample_data(e.agg.2))
+e.agg.2_n <- transform_sample_counts(e.f, function(x) x / sum(x))
+
+plot_bar(e.agg.2_n, fill = 'phylum') +
+  geom_bar(aes(fill = phylum), stat = "identity", position = "stack") +
+  labs(x = "", y = "Relative Abundance\n") +
+  ggtitle('Eukaryotes community compostion')
+
+```
+
+# SE and aIDA comparison
+
+BE SURE TO USE THE SAME AMOUNT OF DATA!
+
+```{r}
+
+melted_SE.opposite <- melted_SE
+colnames(melted_SE.opposite) <- c('Var2', 'Var1', 'Value.SE')
+melted_SE <- rbind(melted_SE, melted_SE.opposite)
+
+merged_df <- full_join(melted_aIDA, melted_SE, by = c('Var1', 'Var2'))
+
+merged_df
+# 4556
+
+```
+
+```{r}
+
+# Based on aIDA values!
+merged_df <- merged_df %>%
+  mutate(Presence = ifelse(is.na(Value.SE), "NO SE", "SE"))
+
+ggplot(merged_df, aes(x = Presence)) +
+  geom_histogram(stat = "count", fill = "skyblue", color = "black") +
+  labs(title = 'aIDA and SE - Bacteria',
+       x = "Presence",
+       y = "Count") +
+  theme_minimal()
+
+```
+
+```{r}
+
+ggplot(merged_df, aes(x = Presence, y = Value.aIDA)) +
+  geom_violin(trim = FALSE) +
+  stat_summary(fun.data=mean_sdl, geom="pointrange") +
+  labs(title = "Violin Plot of Value.aIDA by Presence",
+       x = "Presence",
+       y = "Value.aIDA") +
+  theme_minimal()
+
+#ggsave('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_violin.pdf')
+```
+
+```{r}
+
+df.SE <- merged_df[merged_df$Presence == "SE", ]
+
+ggplot(df.SE, aes(Value.SE, Value.aIDA)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = TRUE) +
+  ggtitle('SE and aIDA present')
+
+#ggsave('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_lm.pdf')
+```
+
+```{r}
+
+# most SE values are absent
+ggplot(merged_df, aes(x = Value.aIDA, color = "Value.aIDA")) +
+  geom_density() +
+  geom_density(aes(x = Value.SE, color = "ValueSE")) +
+  labs(title = "Density Plot of Value.aIDA and ValueSE",
+       x = "Value",
+       y = "Density") +
+  theme_minimal()
+
+#ggsave('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_density_aIDA.SEandNO.SE.pdf')
+
+# SE + aIDA
+ggplot(df.SE, aes(x = Value.aIDA, color = "Value.aIDA")) +
+  geom_density() +
+  geom_density(aes(x = Value.SE, color = "Value.SE")) +
+  labs(title = "Density Plot of Value.aIDA and ValueSE (Both present)",
+       x = "Value",
+       y = "Density") +
+  theme_minimal()
+
+#ggsave('Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_density_aIDA.SE.pdf')
+
+```
+
+# ALGORITHM
+
+```{r, eval = FALSE}
+
+set.seed(2112)
+
+euks.spieceasi <- spiec.easi(e.agg, 
+                             method='glasso', 
+                             lambda.min.ratio=1e-2,
+                             nlambda=20, 
+                             pulsar.params=list(rep.num=50))
+
+saveRDS(euks.spieceasi, 'Scripts/Eukaryotes/Res/E_SPIEC-EASI/E_spieceasi_after.agglomeration.rds')
+
+```

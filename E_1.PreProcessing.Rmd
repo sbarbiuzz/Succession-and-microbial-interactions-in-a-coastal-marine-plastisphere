@@ -1,0 +1,747 @@
+---
+à---
+title: "WHD_E_PreProcessing"
+output: html_notebook
+---
+
+```{r setup, include = FALSE, print = FALSE}
+
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/Francesca/Documents/INTERNSHIP/") 
+
+```
+
+```{r, echo = FALSE, include = FALSE, print = FALSE}
+
+library(readxl)
+library(dplyr)
+library(purrr)
+library(tidyverse)
+library(reshape2) # melt function
+
+library(pals)
+library(RColorBrewer)
+
+library(ggplot2)
+library(ggfortify)
+
+# Ecology package
+library(vegan)
+library(phyloseq)
+library(microbiome)
+
+```
+
+# DATA FORMATTING
+
+## OTU table
+
+```{r}
+
+asv_table_euk <- read.table('Data/WHD_data_files/WHD_data_files/WHD_Ev4_paired_ASV_run_4MSc/asv/taxonomy_dada2/asvTable_noSingletons.txt', sep = '\t', header = TRUE)
+
+```
+
+```{r}
+
+asv_table_euk$OTU.ID <- paste0('e_', asv_table_euk$OTU.ID)
+rownames(asv_table_euk) <- asv_table_euk$OTU.ID
+
+og_taxonomy_euk <- data.frame(OTU.ID = asv_table_euk$OTU.ID,
+                              taxonomy = asv_table_euk$taxonomy)
+
+asv_table_euk <- asv_table_euk[, !(names(asv_table_euk) %in% c("taxonomy", "OTU.ID"))]
+
+asv_table_euk <- t(asv_table_euk)
+# COL = ASV
+# ROW = Samples
+# 6905 51
+
+```
+
+## Classification
+
+### Reclassification
+
+```{r, eval = FALSE, print = FALSE}
+
+# Reclassification with dada2 and PR2 database
+
+library(dada2)
+library(Biostrings)
+
+seq <- 'Data/WHD_data_files/WHD_data_files/WHD_Ev4_paired_ASV_run_4MSc/asv/taxonomy_dada2/representative_seq_set_noSingletons.fasta'
+
+seqs <- readDNAStringSet(seq)
+seqs <- as.data.frame(seqs)
+seqs$ASV <- paste0('e_', rownames(seqs))
+
+euk_filtered <- c(colnames(euk_nf@otu_table))
+
+seqs_f <- seqs %>% filter(ASV %in% euk_filtered)
+seqs_f <- seqs_f[,-2]
+
+#sequences <- c(seqs$x)
+
+pr2 <-'Zip Files/pr2_version_5.0.0_SSU_dada2.fasta.gz'
+
+euk_reclassification <- assignTaxonomy(seqs_f, pr2, taxLevels = c("Domain","Supergroup","Division","Subdivision", "Class","Order","Family","Genus","Species"))
+
+```
+
+```{r, print = FALSE,warning=FALSE}
+
+reclassification_euk <- read_excel('Data/WHD_data_files/WHD_data_files/WHD_Ev4_paired_ASV_run_4MSc/asv/taxonomy_dada2/reclassification_21.07.24/WHD_PR2_Blastn_output.xlsx', col_names = TRUE, na = 'NA')
+
+```
+
+```{r}
+
+reclassification_euk <- reclassification_euk %>%
+  select(-'...29':-'...37')
+
+nucl.plas <- reclassification_euk %>%
+  filter(Division == c('plas', 'nucl'))
+
+reclassification_euk <- reclassification_euk %>%
+  filter(Division != c('plas', 'nucl'))
+
+reclassification_euk <- reclassification_euk[,!names(reclassification_euk) %in% c("Hit_number_H", "Length", "mismatch", "gapOpen", "Qstart", "Qend", "H_start", "H_end", "bitscore",'Species','Genus','Family','Order','Class', 'Phylum','Division','kingdom')]
+
+colnames(reclassification_euk)[colnames(reclassification_euk) == '...28'] <- 'species'
+colnames(reclassification_euk)[colnames(reclassification_euk) == '...26'] <- 'genus'
+colnames(reclassification_euk)[colnames(reclassification_euk) == '...24'] <- 'family'
+colnames(reclassification_euk)[colnames(reclassification_euk) == '...22'] <- 'order'
+colnames(reclassification_euk)[colnames(reclassification_euk) == '...20'] <- 'class'
+colnames(reclassification_euk)[colnames(reclassification_euk) == '...18'] <- 'phylum'
+colnames(reclassification_euk)[colnames(reclassification_euk) == '...16'] <- 'division'
+colnames(reclassification_euk)[colnames(reclassification_euk) == '...14'] <- 'domain'
+
+colnames(reclassification_euk)[colnames(reclassification_euk) == 'Query_Q'] <- 'ASV'
+
+
+compare_rows <- function(rec) {
+  # Find the row(s) with the maximum value in value_column
+  max_rows <- rec %>%
+    filter(PercentID == max(PercentID))
+  
+  # If there's only one row, return it as is
+  if (nrow(max_rows) == 1) {
+    return(max_rows)
+  }
+  
+  # Find the point of similarity
+  for (col in names(rec)) {
+    if (n_distinct(max_rows[[col]]) > 1) {
+      max_rows <- max_rows[1, , drop = FALSE]
+      return(max_rows)
+    }
+  }
+  return(max_rows)
+}
+
+reclassification_euk <-  reclassification_euk %>%
+  group_by(ASV) %>%
+  do(compare_rows(.)) %>%
+  ungroup() 
+
+reclassification_euk <- reclassification_euk[,!names(reclassification_euk) %in% c("PercentID","e_value")]
+
+bacteria <- reclassification_euk %>%
+  filter(domain == 'Bacteria')
+
+reclassification_euk <- reclassification_euk %>%
+  filter(domain != 'Bacteria')
+
+taxonomy_reclassification_euk <- as.matrix(reclassification_euk)
+prefix_e <- paste0('e_', taxonomy_reclassification_euk[,1])
+
+rownames(taxonomy_reclassification_euk) <- prefix_e
+taxonomy_reclassification_euk <- taxonomy_reclassification_euk[,-1]
+
+taxonomy_reclassification_euk <- data.frame(taxonomy_reclassification_euk)
+
+head(taxonomy_reclassification_euk)
+
+```
+
+### Original Classification
+
+```{r, echo = FALSE}
+
+classification_euk <- read_excel('Data/WHD_data_files/WHD_data_files/WHD_Ev4_paired_ASV_run_4MSc/asv/taxonomy_dada2/taxonomy_assignment_noSignletons.xlsx', col_names = FALSE, na = 'NA')
+
+# TIBBLE 2905 x 26
+
+# Checking entries
+#unique(classification_euk$...3)
+#unique(classification_euk$...7) 
+#unique(classification_euk$...10) 
+#unique(classification_euk$...13)
+#unique(classification_euk$...16) 
+#unique(classification_euk$...19)
+#unique(classification_euk$...22) 
+#unique(classification_euk$...25) 
+# all TRUE
+
+colnames(classification_euk)[colnames(classification_euk) == '...1'] <- 'OTU'
+colnames(classification_euk)[colnames(classification_euk) == '...6'] <- 'domain'
+colnames(classification_euk)[colnames(classification_euk) == '...9'] <- 'kingdom'
+colnames(classification_euk)[colnames(classification_euk) == '...12'] <- 'phylum'
+colnames(classification_euk)[colnames(classification_euk) == '...15'] <- 'class'
+colnames(classification_euk)[colnames(classification_euk) == '...18'] <- 'order'
+colnames(classification_euk)[colnames(classification_euk) == '...21'] <- 'family'
+colnames(classification_euk)[colnames(classification_euk) == '...24'] <- 'genus'
+
+classification_euk <- classification_euk[,!names(classification_euk) %in% c('...2','...3','...4','...5','...7', '...10','...13', '...16', '...19', '...22', '...25')]
+
+head(classification_euk)
+```
+
+```{r}
+
+#unique(classification_euk$domain) # Eukaryota Bacteria Archaea
+
+to_match <- classification_euk[classification_euk$domain != 'Eukaryota',]
+
+classification_euk <- classification_euk[classification_euk$domain == 'Eukaryota', ]
+#unique(classification_euk$domain) # Eukaryota
+
+#unique(to_match$domain)  # Eukaryotes
+#unique(to_match$kingdom) # Bacteria Archea (undefined)
+
+```
+
+```{r}
+
+classification_euk <- classification_euk[,!names(classification_euk) %in% c('...8','...11','...14','...17','...20', '...23', '...26')]
+
+taxonomy_classification_euk <- as.matrix(classification_euk)
+prefix_e <- paste0('e_', taxonomy_classification_euk[,1])
+
+rownames(taxonomy_classification_euk) <- prefix_e
+taxonomy_classification_euk <- taxonomy_classification_euk[,-1]
+
+taxonomy_classification_euk <- data.frame(taxonomy_classification_euk)
+
+head(taxonomy_classification_euk)
+```
+
+## Metadata
+
+```{r}
+
+metadata <- read_excel('Data/WHD_data_files/WHD_data_files/WHD_MIMARKS_Table/WHD_Bv6_Ev4_2013_Metadata_treatment.xlsx',
+                       na = "NA")
+
+metadata <- as.data.frame(t(metadata))
+
+colnames(metadata) <- c('project_name', 'investigation_type', 'experimental_factor', 'geo_loc_name', 'lat_lon', 'collection_date','biome', 'feature', 'material', 'env_package', 'samp_collect_device', 'samp_size', 'nucl_acid_ext', 'lib_reads_seqd', 'lib_const_meth', 'target_gene', 'target_subfragment', 'seq_meth', 'pcr_primers', 'pcr_cond', 'seq_quality_check', 'sop', 'url', 'depth (m)', 'temp (C)', 'salinity (ppt)')
+
+rownames(metadata) <- substr(rownames(metadata), 1, 8)
+
+
+metadata$collection_date <- as.Date(as.numeric(metadata$collection_date), origin = "1899-12-30")
+
+metadata$collection_date <- as.factor(metadata$collection_date)
+
+metadata$material <- sapply(strsplit(metadata$material, " "), function(x) paste(x, collapse = "."))
+
+metadata <- cbind(sample = rownames(metadata), metadata)
+
+head(metadata)
+```
+
+### Sample Checking
+
+```{r}
+
+euk_sample.depth <- rowSums(asv_table_euk)
+
+#summary(euk_sample.depth)
+#   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# 58839  107014  126785  123742  138529  195727 
+
+euk_sample.depth <- data.frame(sample = names(euk_sample.depth),
+                               sample.depth = unlist(euk_sample.depth))
+
+e.metadata <- data.frame(sample = metadata$sample, 
+                         collection_date = metadata$collection_date,
+                         material = metadata$material)
+
+e.metadata <- merge(e.metadata, euk_sample.depth, by = 'sample')
+
+e.metadata
+
+```
+
+## Phyloseq object
+
+```{r}
+
+OTU_e = otu_table(as.matrix(asv_table_euk), taxa_are_rows = FALSE)
+SAM = sample_data(metadata) 
+TAX_e = tax_table(as.matrix(taxonomy_classification_euk))
+
+euk_phylo.og <- phyloseq(OTU_e, TAX_e, SAM)
+
+euk_phylo.og
+# 6862 taxa, 51 samples
+
+```
+
+```{r}
+
+OTU_e = otu_table(as.matrix(asv_table_euk), taxa_are_rows = FALSE)
+SAM = sample_data(metadata) 
+TAX_e = tax_table(as.matrix(taxonomy_reclassification_euk))
+
+euk_phylo <- phyloseq(OTU_e, TAX_e, SAM)
+
+euk_phylo
+# 6862 taxa, 51 samples
+
+```
+
+
+# PRE-PROCESSING
+
+```{r}
+
+# Normalization
+euk_n <- transform_sample_counts(euk_phylo, function(x) x / sum(x))
+
+# Sequencing error filtering
+euk_nf <- filter_taxa(euk_n, function(x) {sum(x > 0) > 1 & max(x) > 0.01}, TRUE)
+# 130 
+
+# Name of filtered ASV for reclassification
+#write.table(colnames(euk_nf@otu_table), file = "euk_filtered.txt", sep = "\t", row.names = FALSE)
+
+# Normalization
+euk_nfn <- transform_sample_counts(euk_nf, function(x) x / sum(x))
+
+
+# CLR
+euk_nfc <- microbiome::transform(euk_nfn, "clr")
+
+taxa_names <- colnames(as.data.frame(euk_nf@otu_table))  # or use colnames() if it's in columns
+euk_f <- prune_taxa(taxa_names, euk_phylo)
+
+```
+
+```{r, eval = FALSE}
+
+e_otu <- as.data.frame(euk_phylo@otu_table)
+
+e_min_read_sample <- min(rowSums(e_otu))
+e_min_sample_index <- which(rowSums(e_otu) == e_min_read_sample)
+#WHD_00088, 7431
+
+e_colors <- rep("lightblue", nrow(e_otu))
+e_colors[e_min_sample_index] <- "blue"
+
+#pdf('Scripts/Eukaryotes/Res/E_PreProcessing/E_rarefaction.pdf',10, 10)
+euk_rarecurve <- rarecurve(e_otu, step = 500, label = FALSE, cex = 0.75, las = 1, col = e_colors)
+abline(v = e_min_read_sample, lty = 'dashed', col = 'black')
+#dev.off()
+
+```
+
+# Graphs
+
+## PCA
+
+```{r}
+
+# PCA
+
+otu <- as.data.frame(euk_nfc@otu_table)
+
+pca <- prcomp(otu)#, scale. = TRUE)
+
+otu$material <- metadata$material
+otu$collection_date <- metadata$collection_date
+
+# Plot the PCA results
+autoplot(pca, data = otu, colour = 'collection_date', shape = 'material') +
+  ggtitle('PCA of eukaryotic community') +
+  scale_color_brewer(palette='Set1') +
+  theme_minimal()
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_PCA.pdf')
+
+```
+
+## Compositionality
+
+```{r}
+
+library(Polychrome)
+
+P40 <- createPalette(10, c("#e9967a", "#9379db", "#ff1493"))
+P40 <- sortByHue(P40)
+P40 <- as.vector(t(matrix(P40, ncol=4)))
+
+euk_m <- psmelt(euk_nfn)
+material_lab <- setNames(euk_m$material, euk_m$Sample)
+
+
+ggplot(euk_m, aes(x = Sample, y = Abundance, fill = phylum)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(x = "Material", y = "Relative Abundance\n", fill = "Phylum") +
+  scale_fill_manual(values = P40) +
+  theme_bw() +
+  scale_y_continuous(labels = scales::percent) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1),
+    legend.position = 'none'
+  ) +
+  scale_x_discrete(labels = material_lab) +
+  facet_wrap(~ collection_date, scales = "free_x", nrow = 1)
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_composition_reclassification.pdf', width = 15, height=8)
+
+```
+#### Metazoa
+
+```{r}
+metazoa <- subset_taxa(euk_nfn, phylum == "Opisthokonta-Metazoa")
+# 60
+
+taxonomy <- as.data.frame(tax_table(metazoa))
+# Brozoa  11
+# Hydrozoa  7
+# Maxillopoda 17
+
+#table(taxonomy$family)
+
+taxonomy$family <- ifelse(
+  taxonomy$family %in% c("Bryozoa_XX", "Hydrozoa", 'Maxillopoda'),  taxonomy$family,  # Keep these families
+  "Others")
+
+# Assign back to the phyloseq object
+tax_table(metazoa) <- as.matrix(taxonomy)
+
+
+```
+
+
+```{r}
+metazoa_rel <- transform_sample_counts(metazoa, function(x) x / sum(x))
+
+metazoa_family <- tax_glom(metazoa_rel, taxrank = "family")
+metazoa_family <- psmelt(metazoa_family)
+
+```
+
+```{r}
+
+P40 <- c('#524582', '#367bc0', '#8fe1a2', 'lightgrey')
+
+ggplot(metazoa_family, aes(y = Sample, x = Abundance, fill = factor(family, levels = c("Bryozoa_XX", "Hydrozoa", 'Maxillopoda', 'Others')))) +
+  geom_bar(stat = "identity", position = "fill") +
+  scale_fill_manual(
+    values = P40,
+    breaks = c("Bryozoa_XX", "Hydrozoa", 'Maxillopoda', 'Others'),
+    drop = FALSE # Ensure all levels, even unrepresented ones, appear in the legend
+  ) +
+  scale_x_continuous(labels = scales::percent) +
+  labs(y = "Sample", x = "Relative Abundance (%)", fill = "Family") +
+  theme_bw() +
+  theme(
+    axis.text.y = element_text(size = 8),
+    axis.text.x = element_text(size = 8, angle = 0),
+    legend.position = 'bottom'
+  ) +
+  scale_y_discrete(labels = material_lab) +
+  facet_wrap(~ collection_date, scales = "free_y", ncol = 1)
+
+
+ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_metazoa.pdf', height = 15, width = 5)
+
+```
+
+
+
+## Richness
+
+```{r}
+
+# Shannon
+
+plot_richness(euk_f, "material", measures= 'Shannon', color = 'material') +
+  geom_boxplot(outlier.shape = NA, alpha = 0.5) + 
+  geom_jitter(width = 0.2, size = 2, alpha = 0.7) +  
+  stat_summary(fun = mean, geom = "point", color = "black", size = 1.5) +  # mean points
+  facet_wrap(~ collection_date, scales = 'fixed', nrow = 1) +
+  scale_color_brewer(palette = "Set1") +  
+  labs(y = "Shannon Index", x = NULL) +
+  theme_bw() +
+  theme(
+    strip.text = element_text(size = 12),
+    legend.position = "bottom",
+    axis.text.x = element_blank()
+  )
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_Shannon.richness.pdf', width = 40, height = 20, units = "cm")
+
+```
+
+```{r}
+
+# Observed
+
+plot_richness(euk_f, "material", measures= 'Observed', color = 'material') +
+  geom_boxplot(outlier.shape = NA, alpha = 0.5) + 
+  geom_jitter(width = 0.2, size = 2, alpha = 0.7) +  
+  stat_summary(fun = mean, geom = "point", color = "black", size = 1.5) +  # mean points
+  facet_wrap(~ collection_date, scales = 'fixed', nrow = 1) +
+  scale_color_brewer(palette = "Set1") +  
+  labs(y = "Observed Richness", x = NULL) +
+  theme_bw() +
+  theme(
+    strip.text = element_text(size = 12),
+    legend.position = "bottom",
+    axis.text.x = element_blank()
+  )
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_observed.richness.pdf', width = 60, height = 30, units = "cm")
+
+```
+
+
+```{r}
+
+# Chao2
+
+library(fossil)
+
+otu <- as.data.frame(euk_f@otu_table)
+
+# Chao2 per sample (1)
+c2 <- apply(otu, 1, chao2)
+
+sample_data(euk_f)$chao2 <- c2
+
+ggplot(sample_data(euk_f), aes(x = material, y = chao2, color = material)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.5) + 
+  geom_jitter(width = 0.2, size = 2, alpha = 0.7) +  
+  stat_summary(fun = mean, geom = "point", color = "black", size = 1.5) +  # mean points
+  facet_wrap(~ collection_date, scales = 'fixed', nrow = 1) +
+  scale_color_brewer(palette = "Set1") +  
+  labs(y = "Chao2 Index", x = NULL) +
+  theme_bw() +
+  theme(
+    strip.text = element_text(size = 12),
+    legend.position = "bottom",
+    axis.text.x = element_blank()
+  )
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_Chao2.richness.pdf', width = 40, height = 20, units = "cm")
+
+```
+
+
+## PCoA
+
+```{r}
+
+# Jaccard
+pcoa <- ordinate(euk_nfn, method = "PCoA", distance = "jaccard")
+plot_ordination(euk_nfn, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCoA1 [20.1%]') +
+  #ylab('PCoA2 [12.4%]') +
+  ggtitle('Pricipal Coordinate Analysis - Jaccard')
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_PCoA_jcrd.pdf')
+
+# Horn
+pcoa <- ordinate(euk_nfn, method = "PCoA", distance = "horn")
+plot_ordination(euk_nfn, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCoA1 [35.3%]') +
+  #ylab('PCoA2 [18.8%]') +
+  ggtitle('Pricipal Coordinate Analysis - Horn')
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_PCoA_horn.pdf')
+
+# Morisita
+pcoa <- ordinate(euk_nfn, method = "PCoA", distance = "morisita")
+plot_ordination(euk_nfn, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCoA1 [2%]') +
+  #ylab('PCoA2 [2%]') +
+  ggtitle('Pricipal Coordinate Analysis - Morisita')
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_PCoA_morisita.pdf')
+
+# Bray-Curtis
+pcoa <- ordinate(euk_nfn, method = "PCoA", distance = "bray")
+plot_ordination(euk_nfn, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCo1 [26.1%]') +
+  #ylab('PCo2 [17.4%]') +
+  ggtitle('Principal Coordinate Analysis - Bray-Curtis')
+  
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_PCoA_bray.pdf')
+
+
+
+```
+
+### No Normalized
+
+```{r}
+
+# Jaccard
+pcoa <- ordinate(euk_phylo, method = "PCoA", distance = "jaccard")
+plot_ordination(euk_phylo, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCoA1 [17%]') +
+  #ylab('PCoA2 [11.3%]') +
+  ggtitle('Pricipal Coordinate Analysis - Jaccard (Not normalizad)')
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_PCoA_jcrd_NOTnorm.pdf')
+
+
+# Bray-Curtis
+pcoa <- ordinate(euk_phylo, method = "PCoA", distance = "bray")
+plot_ordination(euk_phylo, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCo1 [22.8%]') +
+  #ylab('PCo2 [16.1%]') +
+  ggtitle('Principal Coordinate Analysis - Bray-Curtis (Not Normalized))')
+  
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_PCoA_bray_NOTnorm.pdf')
+
+
+# Horn
+pcoa <- ordinate(euk_phylo, method = "PCoA", distance = "horn")
+plot_ordination(euk_phylo, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCoA1 [34.7%]') +
+  #ylab('PCoA2 [18.6%]') +
+  ggtitle('Pricipal Coordinate Analysis - Horn (Not normalizad)')
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_PCoA_horn_NOTnorm.pdf')
+
+
+# Morisita
+pcoa <- ordinate(euk_phylo, method = "PCoA", distance = "morisita")
+plot_ordination(euk_phylo, pcoa, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  #xlab('PCoA1 [34.7%]') +
+  #ylab('PCoA2 [18.6%]') +
+  ggtitle('Pricipal Coordinate Analysis - Morisita (Not normalizad)')
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_PCoA_morisita_NOTnorm.pdf')
+
+
+```
+
+## NMDS
+
+```{r}
+
+# Jaccard
+nmds <- ordinate(euk_nfn, method = "NMDS", distance = "jaccard")
+saveRDS(nmds, 'Scripts/Eukaryotes/Res/E_PreProcessing/NMDS_stress/E_NMDS.jcrd.rds')
+plot_ordination(euk_nfn, nmds, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  ggtitle('NMDS - Jaccard')
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_NMDS.jcrd.pdf')
+
+
+# Horn
+nmds <- ordinate(euk_nfn, method = "NMDS", distance = "horn")
+saveRDS(nmds, 'Scripts/Eukaryotes/Res/E_PreProcessing/NMDS_stress/E_NMDS.horn.rds')
+plot_ordination(euk_nfn, nmds, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  ggtitle('NMDS - Horn')
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_NMDS.horn.pdf')
+
+
+# Bray-Curtis
+
+nmds <- ordinate(euk_nfn, method = "NMDS", distance = "bray")
+saveRDS(nmds, 'Scripts/Eukaryotes/Res/E_PreProcessing/NMDS_stress/E_NMDS.bray.rds')
+plot_ordination(euk_nfn, nmds, color="collection_date", shape = 'material') +
+   geom_point(size = 4) +
+  scale_color_brewer(palette = "RdBu") +
+  theme_minimal() +
+  theme(plot.title = element_text(size = 20, hjust = 0.5, family = "sans")
+  ) +
+  #facet_wrap(~ collection_date, scales = 'free_x') +
+  annotate("text", x = -Inf, y = Inf, label = "Stress = 0.205", hjust = -0.1, vjust = 1.5, size = 5, color = "black")
+  ggtitle('Bacteria NMDS')
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_NMDS.bray.pdf', height = 7, width = 9)
+  
+```
+
+### No normalization
+
+```{r}
+
+# Jaccard
+nmds <- ordinate(euk_phylo, method = "NMDS", distance = "jaccard")
+saveRDS(nmds, 'Scripts/Eukaryotes/Res/E_PreProcessing/NMDS_stress/E_NMDS.jcrd_NOTnorm.rds')
+plot_ordination(euk_phylo, nmds, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  ggtitle('NMDS - Jaccard (Not normalizad)')
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_NMDS.jcrd_NOTnorm.pdf')
+
+
+# Horn
+nmds <- ordinate(euk_phylo, method = "NMDS", distance = "horn")
+saveRDS(nmds, 'Scripts/Eukaryotes/Res/E_PreProcessing/NMDS_stress/E_NMDS_NOTnorm.horn.rds')
+plot_ordination(euk_phylo, nmds, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  ggtitle('NMDS - Horn (Not normalizad)')
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_NMDS.horn_NOTnorm.pdf')
+
+
+# Bray-Curtis
+
+nmds <- ordinate(euk_phylo, method = "NMDS", distance = "bray")
+saveRDS(nmds, 'Scripts/Eukaryotes/Res/E_PreProcessing/NMDS_stress/E_NMDS_NOTnorm.bray.rds')
+plot_ordination(euk_phylo, nmds, color="collection_date", shape = 'material') +
+  geom_point(size = 3) +
+  scale_color_brewer(palette='Set1') +
+  ggtitle('NMDS - Bray-Curtis (Not normalizad)')
+
+#ggsave('Scripts/Eukaryotes/Res/E_PreProcessing/E_NMDS.bray_NOTnorm.pdf')
+  
+
+```
+
+# Saves
+
+```{r}
+
+# PHYLOSEQ OBJECTS
+saveRDS(euk_phylo.og, 'Scripts/Eukaryotes/Res/E_PreProcessing/euk_phylo.og.rds')
+saveRDS(euk_phylo, 'Scripts/Eukaryotes/Res/E_PreProcessing/euk_phylo.rds')
+saveRDS(euk_n, 'Scripts/Eukaryotes/Res/E_PreProcessing/euk_n.rds')
+saveRDS(euk_nf, 'Scripts/Eukaryotes/Res/E_PreProcessing/euk_nf.rds')
+saveRDS(euk_nfn, 'Scripts/Eukaryotes/Res/E_PreProcessing/euk_nfn.rds')
+
+```

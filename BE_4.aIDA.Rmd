@@ -1,0 +1,1622 @@
+---
+title: "WHD_BE_aIDA"
+output: html_notebook
+---
+
+```{r setup, include = FALSE, print = FALSE}
+
+require("knitr")
+opts_knit$set(root.dir = "C:/Users/Francesca/Documents/INTERNSHIP/") 
+
+```
+
+```{r, echo = FALSE, include = FALSE, print = FALSE}
+
+library(readxl)
+library(dplyr)
+library(purrr)
+library(tidyverse)
+library(reshape2) # melt function
+
+library(ggplot2)
+library(ggfortify)
+library(RColorBrewer)
+
+library(SpiecEasi)
+
+# Ecology package
+library(vegan)
+library(phyloseq)
+library(microbiome)
+
+# aIDA
+library(pcalg)
+library(Rgraphviz)
+library(graph)
+library(ComplexHeatmap)
+library(DESeq2)
+library(igraph)
+
+# Clustering
+library(cluster)
+library(factoextra) 
+
+```
+
+# Data
+
+```{r}
+
+be.ps <- readRDS('Scripts/phyloseq.objects/be.ps.rds')
+eb.ps <- readRDS('Scripts/phyloseq.objects/eb.ps.rds')
+
+de.ds <- read.csv('Scripts/Bact.Euk/Res/BE_DE/res_df.csv')
+
+```
+
+```{r}
+
+enrichment.color <- c('Summer' = '#d46e6e',
+                      'Fall' = '#7a88c2',
+                      'No enrichment' = 'lightgrey')
+
+```
+
+
+## Relative abundance
+
+```{r, eval = F}
+
+# RELATIVE ABUNDANCES
+bact.rel <- transform_sample_counts(bact.ps, function(x) x / sum(x))
+bact.otu.rel <- as.data.frame(bact.rel@otu_table)
+
+euk.rel <- transform_sample_counts(euk.ps, function(x) x / sum(x))
+euk.otu.rel <- as.data.frame(euk.rel@otu_table)
+
+be.rel <- merge_phyloseq(bact.rel, euk.rel)
+be.otu.rel <- as.data.frame(be.rel@otu_table)
+
+```
+
+## BE
+
+
+```{r}
+
+be.otu <- as.data.frame(otu_table(be.ps))
+
+# Raw abundances
+be.otu <- data.frame(be.otu)
+
+be.vst <- varianceStabilizingTransformation(as.matrix(be.otu+1), fitType='local')
+
+```
+
+```{r}
+
+taxa.table <- tax_table(be.ps)
+
+phyla <- as.character(taxa.table[, "phylum"])
+unique.phyla <- unique(phyla) # list of phylum
+   
+
+custom_colors <- c('maroon', #Pseudomonadota
+                   "forestgreen", #Cyanobacteria
+                   "#A0D655", #Actinobacteria
+                   'orange', #Rhodothermota
+                   "#FF78E5", #Bacteriodota
+                   'blue', #Lentisphaerota
+                   'skyblue', #Bacillota
+                   'purple',# Verrucomicrobiota
+                   '#9C7250', # Acidobacteria
+                   "#2e5158", # Metazoa
+                   "#6095eb", # Gyrista
+                   "#e69477", # Rhodophyta
+                   '#16fbfa', # Ciliophora
+                   "#fe00e0", #Cercozoa
+                   "#fc1a0f", # Centroplasthelida
+                   '#f5e50d', # Choanoflagellata
+                   '#1c8b16')# Bigyra 
+
+
+
+phylum.color <- setNames(custom_colors, unique.phyla)
+
+```
+## EB
+
+```{r}
+
+eb.otu <- as.data.frame(otu_table(eb.ps))
+
+eb.otu <- data.frame(eb.otu)
+
+eb.vst <- varianceStabilizingTransformation(as.matrix(eb.otu+1), fitType='local')
+
+```
+
+```{r}
+
+taxa.table <- tax_table(eb.ps)
+
+phyla <- as.character(taxa.table[, "phylum"])
+unique.phyla <- unique(phyla) # list of phylum
+#[1] "Pseudomonadota"                        "Cyanobacteriota"                    
+#[3] "Actinomycetota"                        "Rhodothermota"                      
+#[5] "Bacteroidota"                          "Lentisphaerota"                     #[7] "Bacillota"                             "Verrucomicrobiota"                  #[9] "Acidobacteriota"                       "Opisthokonta-Metazoa"                #[11] "Stramenopiles-Gyrista"                 "Rhodophyta-Rhodophyta_X"            #[13] "Alveolata-Ciliophora"                  "Rhizaria-Cercozoa"                  
+#[15] "Centroplasthelida-Centroplasthelida_X" "Opisthokonta-Choanoflagellata" 
+#[17] "Stramenopiles-Bigyra"   
+
+custom_colors <- c("#2e5158", # Metazoa
+                   "#6095eb", # Gyrista
+                   "#e69477", # Rhodophyta
+                   '#16fbfa', # Ciliophora
+                   "#fe00e0", #Cercozoa
+                   "#fc1a0f", # Centroplasthelida
+                   '#f5e50d', # Choanoflagellata
+                   '#1c8b16',# Bigyra
+                   
+                   'maroon', #Pseudomonadota
+                   "forestgreen", #Cyanobacteria
+                   "#A0D655", #Actinobacteria
+                   'orange', #Rhodothermota
+                   "#FF78E5", #Bacteriodota
+                   'blue', #Lentisphaerota
+                   'skyblue', #Bacillota
+                   'purple',# Verrucomicrobiota
+                   '#9C7250') #Acidobacteria) 
+
+
+
+phylum.color <- setNames(custom_colors, unique.phyla)
+
+```
+
+# Bacteria and Eukaryotes
+
+```{r}
+
+resMat <- read.table('Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_resMat.5.tsv', header = TRUE, sep = '\t')
+
+resMat <- as.matrix(resMat)
+diag(resMat) <- 0
+
+write.table(resMat, file = 'Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_resMat.5.tsv', sep = "\t", dec = '.')
+```
+
+```{r}
+
+melted_aIDA<- melt(resMat) # 24 649 (157*157)
+
+melted_aIDA <- melted_aIDA %>%
+  filter(Var1 != Var2)
+# 24 492
+
+colnames(melted_aIDA) <- c('from', 'to', 'value')
+
+```
+
+```{r}
+
+ggplot(melted_aIDA, aes(value)) +
+  geom_histogram(binwidth = 0.1, fill = "blue", color = "black") +
+  labs(title = "aIDA Histogram - Bacteria + Eukaryotes", x = "Value", y = "Frequency") +
+  theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_histogram.pdf')
+
+```
+
+## Clustering
+
+### Causes (ROWS)
+
+```{r}
+
+set.seed(1234)
+
+# Clustering of ROWS
+fviz_nbclust(resMat, kmeans, method = "silhouette")
+# 3
+
+k <- kmeans(resMat, centers = 3)
+fviz_cluster(k, resMat)
+
+```
+
+```{r}
+
+res.df <- data.frame(OTU = names(k$cluster), 
+                     cluster = k$cluster)
+
+#write.table(res.df, 'Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_cluster.causes.tsv', sep = "\t")
+
+# Names ectracted from the clusters, and then used for taking relative abundances
+
+otu.c <- as.data.frame(t(be.otu.rel))
+otu.c$OTU <- rownames(otu.c)
+otu.c <- merge(otu.c, res.df)
+otu.c$cluster <- as.factor(otu.c$cluster)
+
+otu_long <- otu.c %>%
+  pivot_longer(cols = -c(cluster, OTU), 
+               names_to = "sample", 
+               values_to = "count")
+ 
+otu_summary <- otu_long %>%
+  group_by(sample, cluster) %>%
+  summarise(mean_count = mean(count),
+            log_count = log10(mean_count))
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_cluster.causes.log10.pdf')
+ggplot(otu_summary, aes(x = sample, y = log_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = "Log10 Mean Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#dev.off()
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_cluster.causes.mean.pdf')
+ggplot(otu_summary, aes(x = sample, y = mean_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = 'Mean Count') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#dev.off()
+
+```
+
+
+### Effects (COLS)
+
+```{r}
+
+set.seed(1234)
+
+# Clustering of COLS
+fviz_nbclust(t(resMat), kmeans, method = "silhouette")
+# 3
+
+k <- kmeans(t(resMat), centers = 3)
+fviz_cluster(k, t(resMat))
+
+```
+
+```{r}
+
+res.df <- data.frame(OTU = names(k$cluster), 
+                     cluster = k$cluster)
+
+write.table(res.df, 'Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_cluster.effects.tsv', sep = "\t")
+
+otu.c <- as.data.frame(t(be.otu.rel))
+otu.c$OTU <- rownames(otu.c)
+otu.c <- merge(otu.c, res.df)
+otu.c$cluster <- as.factor(otu.c$cluster)
+
+otu_long <- otu.c %>%
+  pivot_longer(cols = -c(cluster, OTU), 
+               names_to = "sample", 
+               values_to = "count")
+ 
+otu_summary <- otu_long %>%
+  group_by(sample, cluster) %>%
+  summarise(mean_count = mean(count),
+            log_count = log10(mean_count))
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_cluster.effects.log10.pdf')
+ggplot(otu_summary, aes(x = sample, y = log_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = "Log10 Mean Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#dev.off()
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_cluster.effects.log10.pdf')
+ggplot(otu_summary, aes(x = sample, y = mean_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = 'Mean Count') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#dev.off()
+
+```
+
+## Heatmap
+
+```{r}
+
+set.seed(2112)
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_heatmap.pdf', width = 25, height = 30)
+Heatmap(resMat, name = "mat", rect_gp = gpar(col = "white", lwd = 1),
+        column_title = 'Effects',
+        row_title = 'Causes',
+        column_km = 4,
+        row_km = 3,
+        show_parent_dend_line = TRUE,
+        layer_fun = function(j, i, x, y, width, height, fill) {
+        grid.text(sprintf("%.2f", resMat[i, j]), x, y, gp = gpar(fontsize = 2))}
+        )
+#dev.off()
+
+# Check the legend (you dont have very stronger interactions)
+
+```
+
+## Network Skeleton
+
+```{r}
+
+set.seed(1213)
+
+otu <- be.vst
+
+# form pcalg vignettes
+
+V <- colnames(otu)
+
+suffStat <- list(C = cor(otu), n = nrow(otu))
+
+# Estimate initial skeleton CPDAG
+skel.fit <- skeleton(suffStat, indepTest = gaussCItest, p = ncol(otu), alpha = 0.5, labels = V)
+# 289 undirected edges
+
+# Estimated CPDAG, taken from the aIDA algorithm
+pc.fit <- udag2pdagRelaxed(skel.fit, solve.confl=FALSE)
+# 3 undirected, 286 directed edges
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_skeleton.pdf')
+plot(pc.fit, main = "Estimated Skeleton - Bacteria + Eukaryotes")
+#dev.off()
+
+```
+
+```{r}
+
+set.seed(2121)
+
+# https://cran.r-project.org/web/packages/pcalg/vignettes/vignette2018.pdf
+
+# Not weighted, only presence of a edge between two nodes
+adj.mat <- as(pc.fit, 'amat') # type: cpdag
+
+be.grph <- graph_from_adjacency_matrix(adj.mat, mode="directed", diag=FALSE)
+
+be.coords <- layout.fruchterman.reingold(be.grph)
+vsize <- rowMeans(clr(otu),1)+6 # Vertex
+
+# Colors
+taxa.table <- tax_table(be.ps)
+phyla <- as.character(taxa.table[, "phylum"])
+vertex.colors <- sapply(phyla, function(x) phylum.color[x])
+
+# Border color
+dtype <- c(rep(1,58), rep(2,99))
+
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_1.circle.pdf', height = 20, width = 20)
+plot(be.grph,
+     edge.arrow.size = 0.7,
+     layout = be.coords,
+     vertex.frame.color = dtype,
+     vertex.frame.width = 1,
+     
+     vertex.size= vsize, 
+     vertex.color = vertex.colors,
+     main="Network Plot - Bacteria + Eukaryotes")
+#dev.off()
+
+```
+
+```{r}
+
+# Remove isolated nodes
+
+set.seed(2121)
+
+isolated <- V(be.grph)[degree(be.grph) == 0] # Only 1, the graph doesnt really change!
+G2 <- delete.vertices(be.grph, isolated)
+
+vertex.G2 <- V(G2)$name
+vertex.colors.G2 <- vertex.colors[match(vertex.G2, V(be.grph)$name)]
+
+vertex.frame.color.G2 <- dtype[match(vertex.G2, V(be.grph)$name)]
+
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_2.isolated.pdf', height = 30, width = 30)
+plot(G2,
+     edge.arrow.size = 0.7,
+     layout = be.coords,
+     vertex.frame.color = dtype,
+     vertex.frame.width = 1,
+     
+     vertex.size= vsize, 
+     vertex.color = vertex.colors,
+     edge.width = E(G2)$width*20)
+#dev.off()
+
+```
+
+
+```{r}
+
+w.adj.mat <- as.matrix(resMat*adj.mat)
+
+grph <- graph_from_adjacency_matrix(w.adj.mat, mode="directed", diag=FALSE, weighted = TRUE)
+
+V(grph)$size <- igraph:::degree(grph) + 1 # +1 is to avoid size zero vertices
+V(grph)$color <- "#D3D3D3"
+
+#Edges = values in the weighted.adj.mat
+E(grph)$color <- 'green' # POSITIVE
+E(grph)$color[E(grph)$weight<0] <- 'red'#NEGATIVE
+E(grph)$width <- abs(E(grph)$weight)*10
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_circle.pdf', height = 25, width = 25)
+plot(grph,
+     vertex.label.color="black",
+     edge.arrow.size = 1.5,
+     vertex.color = dtype,
+     layout=layout.circle(grph))
+#dev.off()
+
+```
+
+
+```{r}
+
+
+# Remove isolated nodes
+set.seed(2121)
+
+isolated <- V(grph)[degree(grph) == 0]
+G2 <- delete.vertices(grph, isolated)
+
+vertex.G2 <- V(G2)$name
+vertex.colors.G2 <- vertex.colors[match(vertex.G2, V(be.grph)$name)]
+vertex.frame.color.G2 <- dtype[match(vertex.G2, V(be.grph)$name)]
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_3.circle.weighted.pdf', height = 60, width = 50)
+plot(G2, 
+     vertex.size = vsize, 
+     vertex.color = vertex.colors.G2,
+     vertex.frame.color = vertex.frame.color.G2,
+     vertex.frame.width = 10,
+     vertex.label.cex = 1,
+     vertex.label.family = 'sans',
+     vertex.label.color = 'black',
+     edge.width = E(G2)$width*5)
+
+#dev.off()
+
+```
+
+
+# Eukaryotes and Bacteria
+
+```{r}
+
+eb_aIDA_resMat <- read.table('Scripts/Bact.Euk/Res/BE_aIDA/EB/EB_resMat.5.tsv', header = TRUE, sep = '\t')
+
+resMat <- as.matrix(eb_aIDA_resMat)
+diag(resMat) <- 0
+
+write.table(resMat, file = 'Scripts/Bact.Euk/Res/BE_aIDA/EB/EB_resMat.5.tsv', sep = "\t", dec = '.')
+
+```
+
+```{r}
+
+melted_aIDA<- melt(resMat) # 24 649 (157*157)
+
+
+melted_aIDA <- melted_aIDA %>%
+  filter(Var1 != Var2)
+# 24 492
+
+colnames(melted_aIDA) <- c('Cause', 'Effect', 'Value.aIDA')
+
+```
+
+```{r}
+
+ggplot(melted_aIDA, aes(Value.aIDA)) +
+  geom_histogram(binwidth = 0.1, fill = "blue", color = "black") +
+  labs(title = "aIDA Histoagram - Eukaryotes + Bacteria", x = "Value", y = "Frequency") +
+  theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_aIDA/EB/EB_histogram.pdf')
+
+```
+
+## Clustering
+
+### Causes (ROWS)
+
+```{r}
+
+set.seed(1234)
+
+# Clustering of ROWS
+fviz_nbclust(resMat, kmeans, method = "silhouette")
+# 3
+
+k <- kmeans(resMat, centers = 3)
+fviz_cluster(k, resMat)
+
+```
+
+```{r}
+
+res.df <- data.frame(OTU = names(k$cluster), 
+                     cluster = k$cluster)
+
+write.table(res.df, 'Scripts/Bact.Euk/Res/BE_aIDA/EB/EB_cluster.causes.tsv', sep = "\t")
+
+otu.c <- as.data.frame(t(be.otu.rel))
+otu.c$OTU <- rownames(otu.c)
+otu.c <- merge(otu.c, res.df)
+otu.c$cluster <- as.factor(otu.c$cluster)
+
+otu_long <- otu.c %>%
+  pivot_longer(cols = -c(cluster, OTU), 
+               names_to = "sample", 
+               values_to = "count")
+ 
+otu_summary <- otu_long %>%
+  group_by(sample, cluster) %>%
+  summarise(mean_count = mean(count),
+            log_count = log10(mean_count))
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/EB/EB_cluster.causes.log10.pdf')
+ggplot(otu_summary, aes(x = sample, y = log_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = "Log10 Mean Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#dev.off()
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/EB/EB_cluster.causes.mean.pdf')
+ggplot(otu_summary, aes(x = sample, y = mean_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = 'Mean Count') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#dev.off()
+
+```
+
+
+### Effects (COLS)
+
+```{r}
+
+set.seed(1234)
+
+# Clustering of ROWS
+fviz_nbclust(t(resMat), kmeans, method = "silhouette")
+# 4
+
+k <- kmeans(t(resMat), centers = 4)
+fviz_cluster(k, t(resMat))
+
+```
+
+```{r}
+
+res.df <- data.frame(OTU = names(k$cluster), 
+                     cluster = k$cluster)
+
+write.table(res.df, 'Scripts/Bact.Euk/Res/BE_aIDA/EB/EB_cluster.effects.tsv', sep = "\t")
+
+otu.c <- as.data.frame(t(be.otu.rel))
+otu.c$OTU <- rownames(otu.c)
+otu.c <- merge(otu.c, res.df)
+otu.c$cluster <- as.factor(otu.c$cluster)
+
+otu_long <- otu.c %>%
+  pivot_longer(cols = -c(cluster, OTU), 
+               names_to = "sample", 
+               values_to = "count")
+ 
+otu_summary <- otu_long %>%
+  group_by(sample, cluster) %>%
+  summarise(mean_count = mean(count),
+            log_count = log10(mean_count))
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/EB/EB_cluster.effects.log10.pdf')
+ggplot(otu_summary, aes(x = sample, y = log_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = "Log10 Mean Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#dev.off()
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/EB/EB_cluster.mean.log10.pdf')
+ggplot(otu_summary, aes(x = sample, y = mean_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "OTU Counts by Cluster", x = "Samples", y = 'Mean Count') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+#dev.off()
+
+```
+
+## Heatmap
+
+```{r}
+
+set.seed(2112)
+
+#pdf('Scripts/Bact.Euk/Res/EB_aIDA/EB/EB_heatmap.pdf', width = 25, height = 30)
+Heatmap(resMat, name = "mat", rect_gp = gpar(col = "white", lwd = 1),
+        column_title = 'Effects',
+        row_title = 'Causes',
+        column_km = 4,
+        row_km = 3,
+        show_parent_dend_line = TRUE,
+        layer_fun = function(j, i, x, y, width, height, fill) {
+        grid.text(sprintf("%.2f", resMat[i, j]), x, y, gp = gpar(fontsize = 2))}
+        )
+#dev.off()
+
+```
+
+
+## Network Skeleton
+
+```{r}
+
+otu <- eb.vst
+
+set.seed(2121)
+
+# form pcalg vignettes
+
+V <- colnames(otu)
+
+suffStat <- list(C = cor(otu), n = nrow(otu))
+
+# Estimate initial skeleton CPDAG
+skel.fit <- skeleton(suffStat, indepTest = gaussCItest, p = ncol(otu), alpha = 0.5, labels = V)
+# 289 undirected
+
+# Estimaeted CPDAG, taken from the aIDA algorithm
+pc.fit <- udag2pdagRelaxed(skel.fit, solve.confl=FALSE)
+# 3 undirected, 286 directed
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/EB/EB_skeleton.pdf')
+plot(pc.fit, main = "Estimated Skeleton - Eukaryotes + Bacteria")
+#dev.off()
+
+```
+
+```{r}
+
+set.seed(2121)
+
+# https://cran.r-project.org/web/packages/pcalg/vignettes/vignette2018.pdf
+
+# Not weighted, only presence of a edge between two nodes
+adj.mat <- as(pc.fit, 'amat') # type: cpdag
+
+eb.grph <- graph_from_adjacency_matrix(adj.mat, mode="directed", diag=FALSE)
+
+be.coords <- layout.fruchterman.reingold(eb.grph)
+vsize <- rowMeans(clr(otu),1)+6 # Vertex
+
+# Colors
+taxa.table <- tax_table(eb.ps)
+phyla <- as.character(taxa.table[, "phylum"])
+vertex.colors <- sapply(phyla, function(x) phylum.color[x])
+
+# border color
+dtype <- c(rep(1,58), rep(2,99))
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/EB/EB_1.pdf', height = 20, width = 20)
+plot(eb.grph,
+     edge.arrow.size = 0.7,
+     layout = be.coords,
+     vertex.frame.color = dtype,
+     vertex.frame.width = 1,
+     
+     vertex.size= vsize, 
+     vertex.color = vertex.colors,
+     main="Network Plot - Eukaryotes + Bacteria")
+#dev.off()
+
+```
+
+```{r}
+
+# Remove isolated nodes
+
+set.seed(2121)
+
+isolated <- V(eb.grph)[degree(eb.grph) == 0] # Only 1, the graph doesnt really change!
+G2 <- delete.vertices(eb.grph, isolated)
+
+vertex.G2 <- V(G2)$name
+vertex.colors.G2 <- vertex.colors[match(vertex.G2, V(eb.grph)$name)]
+
+vertex.frame.color.G2 <- dtype[match(vertex.G2, V(eb.grph)$name)]
+
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/EB/EB_2.isolated.pdf', height = 30, width = 30)
+plot(G2,
+     edge.arrow.size = 0.7,
+     layout = be.coords,
+     vertex.frame.color = dtype,
+     vertex.frame.width = 1,
+     
+     vertex.size= vsize, 
+     vertex.color = vertex.colors,
+     edge.width = E(G2)$width*20)
+#dev.off()
+
+```
+
+```{r}
+
+w.adj.mat <- as.matrix(resMat*adj.mat)
+
+grph <- graph_from_adjacency_matrix(w.adj.mat, mode="directed", diag=FALSE, weighted = TRUE)
+
+#V(grph)$name <- otu.map$family
+V(grph)$size <- igraph:::degree(grph) + 1 # +1 is to avoid size zero vertices
+V(grph)$color <- "#D3D3D3"
+
+#Edges = values in the weighted.adj.mat
+E(grph)$color <- 'green' # POSITIVE
+E(grph)$color[E(grph)$weight<0] <- 'red'#NEGATIVE
+E(grph)$width <- abs(E(grph)$weight)*10
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/EB/EB_circleInteractions.pdf', height = 25, width = 25)
+plot(grph,
+     vertex.label.color="black",
+     edge.arrow.size = 1.5,
+     #vertex.color = dtype,
+     layout=layout.circle(grph))
+#dev.off()
+
+
+```
+
+```{r}
+
+
+# Remove isolated nodes
+set.seed(2121)
+
+isolated <- V(grph)[degree(grph) == 0]
+G2 <- delete.vertices(grph, isolated)
+
+vertex.G2 <- V(G2)$name
+vertex.colors.G2 <- vertex.colors[match(vertex.G2, V(eb.grph)$name)]
+vertex.frame.color.G2 <- dtype[match(vertex.G2, V(eb.grph)$name)]
+
+pdf('Scripts/Bact.Euk/Res/BE_aIDA/EB/EB_3.circle.weighted.pdf', height = 60, width = 50)
+plot(G2, 
+     vertex.size = vsize, 
+     vertex.color = vertex.colors.G2,
+     vertex.frame.color = vertex.frame.color.G2,
+     vertex.frame.width = 10,
+     vertex.label.cex = 1,
+     vertex.label.family = 'sans',
+     vertex.label.color = 'black',
+     edge.width = E(G2)$width*5)
+
+
+# Legend for phyla colors
+legend("bottomleft", 
+       legend = unique.phyla, 
+       fill = phylum.color, 
+       title = "Phylum",
+       cex = 3,
+       ncol = 2)  # Adjust size of legend text
+dev.off()
+
+```
+
+# Bacteria to Eukaryotes
+
+```{r}
+
+resMat <- read.table('Scripts/Bact.Euk/Res/BE_aIDA/Bact to Euk/BtoE_resMat.5.tsv', header = TRUE, sep = '\t')
+
+resMat <- as.matrix(resMat)
+write.table(resMat, file = 'Scripts/Bact.Euk/Res/BE_aIDA/Bact to Euk/BtoE_resMat.5.tsv', sep = "\t", dec = '.')
+
+otu <- be.vst
+
+```
+
+```{r}
+
+melt_aIDA <- melt(resMat)
+colnames(melt_aIDA) <- c('Cause', 'Effect', 'Value.aIDA')
+
+ggplot(melt_aIDA, aes(Value.aIDA)) +
+  geom_histogram(binwidth = 0.1, fill = "blue", color = "black") +
+  labs(title = "aIDA Histogram - Bacteria to Eukaryotes", x = "Value", y = "Frequency") +
+  theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_histogram.pdf')
+
+```
+
+## Clustering
+
+### Causes B (ROWS)
+
+```{r}
+
+# Bacteria Clustering (rows)
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/Bact to Euk/BtoE_cluster.silhoutte.bact.pdf', 10, 5)
+fviz_nbclust(resMat, kmeans, method = "silhouette") # 2
+#dev.off()
+
+k <- kmeans(resMat, centers = 2)
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/Bact to Euk/BtoE_cluster.bact.pdf')
+fviz_cluster(k, resMat, main = 'Causes (Bacteria) Cluster Plot')
+#dev.off()
+
+```
+
+```{r}
+
+# OTU and Cluster
+res.df <- data.frame(OTU = names(k$cluster), 
+                     cluster = k$cluster)
+
+write.table(res.df, file = 'Scripts/Bact.Euk/Res/BE_aIDA/Bact to Euk/BtoE_cluster.bact.tsv', sep = "\t")
+
+samp <- readRDS('Scripts/timematerialreplicate.rds')
+
+otu.c <- as.data.frame(t(bact.otu.rel))
+otu.c$OTU <- rownames(otu.c)
+otu.c <- merge(otu.c, res.df)
+otu.c$cluster <- as.factor(otu.c$cluster)
+
+otu_long <- otu.c %>%
+  pivot_longer(cols = -c(cluster, OTU), 
+               names_to = "sample", 
+               values_to = "count")
+ 
+otu_summary <- otu_long %>%
+  group_by(sample, cluster) %>%
+  summarise(mean_count = mean(count),
+            log_count = log10(mean_count))
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/Bact to Euk/BtoE_cluster.bact.mean.pdf', width = 10, height = 10)
+ggplot(otu_summary, aes(x = sample, y = mean_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "Bacteria", x = "Samples", y = 'Mean relative abundance per cluster') +
+  theme_minimal() +
+  scale_x_discrete(labels = samp) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
+#dev.off()
+
+```
+
+#### Effects E (COLS)
+
+```{r}
+
+# Eukaryotes Clustering (columns)
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/Bact to Euk/BtoE_cluster.silhoutte.euk.pdf', 10, 5)
+fviz_nbclust(t(resMat), kmeans, method = "silhouette") # 2
+#dev.off()
+
+k <- kmeans(t(resMat), centers = 2)
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/Bact to Euk/BtoE_cluster.euk.pdf')
+fviz_cluster(k, t(resMat), main = 'Eukaryotes cluster plot')
+#dev.off()
+
+```
+
+
+```{r}
+
+res.df <- data.frame(OTU = names(k$cluster), 
+                     cluster = k$cluster)
+
+write.table(res.df, file = 'Scripts/Bact.Euk/Res/BE_aIDA/Bact to Euk/BtoE_cluster.euk.tsv', sep = "\t")
+
+
+samp <- readRDS('Scripts/timematerialreplicate.rds')
+
+otu.c <- as.data.frame(t(euk.otu.rel))
+otu.c$OTU <- rownames(otu.c)
+otu.c <- merge(otu.c, res.df)
+otu.c$cluster <- as.factor(otu.c$cluster)
+
+otu_long <- otu.c %>%
+  pivot_longer(cols = -c(cluster, OTU), 
+               names_to = "sample", 
+               values_to = "count")
+ 
+otu_summary <- otu_long %>%
+  group_by(sample, cluster) %>%
+  summarise(mean_count = mean(count),
+            log_count = log10(mean_count))
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/BtoE_cluster.euk.mean.pdf', width = 10, height = 10)
+ggplot(otu_summary, aes(x = sample, y = mean_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "Eukaryotes", x = "Samples", y = 'Mean relative abundance per cluster') +
+  theme_minimal() +
+  scale_x_discrete(labels = samp) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
+#dev.off()
+
+```
+
+
+
+## Heatmap
+
+```{r}
+
+set.seed(2112)
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/Bact to Euk/BtoE_heatmap.pdf', width = 20, height = 20)
+Heatmap(resMat, name = "mat", rect_gp = gpar(col = "white", lwd = 1),
+        column_title = 'Effects',
+        row_title = 'Causes',
+        column_km = 2,
+        row_km = 2,
+        show_parent_dend_line = TRUE)
+#dev.off()
+
+# Check the legend (you dont have very stronger interactions)
+
+```
+
+## Bipartite
+
+```{r}
+
+melted_be <- melt(resMat) # 5742
+colnames(melted_be) <- c('from', 'to', 'value')
+
+#    Min.  1st Qu.   Median     Mean  3rd Qu.     Max. 
+#-2.29223 -0.17050  0.01687  0.02945  0.23304  2.11495
+
+```
+
+
+```{r}
+
+euk.cluster <- read.table('Scripts/Bact.Euk/Res/BE_aIDA/Bact to Euk/BtoE_cluster.euk.tsv', sep = "\t")
+
+euk.cl.1 <- subset(euk.cluster, cluster == 1) # 19
+euk.names <- row.names(euk.cl.1)
+
+bact.cluster <- read.table('Scripts/Bact.Euk/Res/BE_aIDA/Bact to Euk/BtoE_cluster.bact.tsv', sep = "\t")
+
+```
+
+### Purple Cluster
+
+```{r}
+
+# PURPLE CLUSTER
+bact.cl.2 <- subset(bact.cluster, cluster == 2) # 39
+bact.names <- row.names(bact.cl.2)
+
+purple.cl <- melted_be[melted_be$to %in% euk.names,]
+purple.cl <- purple.cl[purple.cl$from %in% bact.names,]
+# 646
+
+#    Min.  1st Qu.   Median     Mean  3rd Qu.     Max. 
+#-1.702763 -0.361761 -0.171351 -0.201942  0.002387  0.746089 
+
+filt.be <- purple.cl %>%
+  filter(value <= -1)
+# 18
+
+```
+
+```{r}
+
+# Eukaryotes colors
+asv_taxonomy_e <- as.data.frame(tax_table(be.ps)) %>%
+  select(phylum) %>%
+  rownames_to_column(var = "ASV") %>%
+  filter(str_starts(ASV, "E_"))
+
+filt.be <- filt.be %>%
+  mutate(to_phylum = asv_taxonomy_e$phylum[match(filt.be$to, asv_taxonomy_e$ASV)]) %>%
+  mutate(to_de = de.ds$expression[match(filt.be$to, de.ds$taxonomy)])
+
+
+# Bacteria
+asv_taxonomy_b <- as.data.frame(tax_table(be.ps)) %>%
+  select(phylum) %>%
+  rownames_to_column(var = "ASV") %>%
+  filter(str_starts(ASV, 'B_'))
+
+filt.be <- filt.be %>%
+  mutate(from_phylum = asv_taxonomy_b$phylum[match(filt.be$from, asv_taxonomy_b$ASV)]) %>%
+  mutate(from_de = de.ds$expression[match(filt.be$from, de.ds$taxonomy)])
+
+# Color match
+filt.be <- filt.be %>%
+  mutate(from_color = phylum.color[from_phylum],
+         from_de = enrichment.color[from_de],
+         to_color = phylum.color[to_phylum],
+         to_de = enrichment.color[to_de])
+
+```
+
+```{r}
+
+# Bipartite graph
+bi.graph <- graph_from_data_frame(filt.be, directed = TRUE) 
+# is bipartite
+
+V(bi.graph)$type <- ifelse(V(bi.graph)$name %in% filt.be$from, TRUE, FALSE)
+
+# From
+V(bi.graph)$fill[V(bi.graph)$type == TRUE] <- filt.be$from_color[match(V(bi.graph)$name[V(bi.graph)$type == TRUE], filt.be$from)]
+V(bi.graph)$outline[V(bi.graph)$type == TRUE] <- filt.be$from_de[match(V(bi.graph)$name[V(bi.graph)$type == TRUE], filt.be$from)]
+
+# To
+V(bi.graph)$fill[V(bi.graph)$type == FALSE] <- filt.be$to_color[match(V(bi.graph)$name[V(bi.graph)$type == FALSE], filt.be$to)]
+V(bi.graph)$outline[V(bi.graph)$type == FALSE] <- filt.be$to_de[match(V(bi.graph)$name[V(bi.graph)$type == FALSE], filt.be$to)]
+
+E(bi.graph)$weight <- filt.be$value
+E(bi.graph)$color <- 'green' # POSITIVE
+E(bi.graph)$color[E(bi.graph)$weight < 0] <- 'red' # NEGATIVE
+
+# Use layout
+LO <- layout_as_bipartite(bi.graph)
+LO <- LO[, c(2, 1)]
+LO[, 2] <- LO[, 2] - 3
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/Bact to Euk/BtoE_bipartite.purple.pdf', width = 15, height = 15)
+plot(
+  bi.graph,
+  layout = LO,
+  vertex.label.cex = 1.2,
+  vertex.label.family = 'sans',
+  vertex.label.color = 'black',
+  vertex.color = V(bi.graph)$fill,   
+  vertex.frame.color = V(bi.graph)$outline,  
+  vertex.frame.width = 5            
+)
+#dev.off()
+
+```
+
+
+### Red Cluster
+
+```{r}
+
+# RED CLUSTER
+bact.cl.1 <- subset(bact.cluster, cluster == 1) # 65
+bact.names <- row.names(bact.cl.1)
+
+red.cl <- melted_be[melted_be$to %in% euk.names, ]
+red.cl <- red.cl[red.cl$from %in% bact.names, ]
+# 1140
+
+#   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#-1.7911  0.2539  0.3868  0.4001  0.5458  1.5704 
+
+filt.be <- red.cl %>%
+  filter(value >= 1 | value <= -1)
+#23
+
+#write.table(filt.be, file = 'Scripts/Bact.Euk/Res/BE_aIDA/Bact to Euk/BtoE_edges.red.tsv', sep = "\t", dec = '.')
+
+```
+
+
+```{r}
+# Eukaryotes colors
+asv_taxonomy_e <- as.data.frame(tax_table(be.ps)) %>%
+  select(phylum) %>%
+  rownames_to_column(var = "ASV") %>%
+  filter(str_starts(ASV, "E_"))
+
+filt.be <- filt.be %>%
+  mutate(to_phylum = asv_taxonomy_e$phylum[match(filt.be$to, asv_taxonomy_e$ASV)])%>%
+  mutate(to_de = de.ds$expression[match(filt.be$to, de.ds$taxonomy)])
+
+
+# Bacteria
+asv_taxonomy_b <- as.data.frame(tax_table(be.ps)) %>%
+  select(phylum) %>%
+  rownames_to_column(var = "ASV") %>%
+  filter(str_starts(ASV, 'B_'))
+
+filt.be <- filt.be %>%
+  mutate(from_phylum = asv_taxonomy_b$phylum[match(filt.be$from, asv_taxonomy_b$ASV)])%>%
+  mutate(from_de = de.ds$expression[match(filt.be$from, de.ds$taxonomy)])
+
+# Color match
+filt.be <- filt.be %>%
+  mutate(from_color = phylum.color[from_phylum],
+         from_de = enrichment.color[from_de],
+         to_color = phylum.color[to_phylum],
+         to_de = enrichment.color[to_de])
+
+```
+
+```{r}
+
+# Bipartite graph 
+bi.graph <- graph_from_data_frame(filt.be, directed = TRUE) 
+# is bipartite
+
+V(bi.graph)$type <- ifelse(V(bi.graph)$name %in% filt.be$from, TRUE, FALSE)
+
+# From
+V(bi.graph)$fill[V(bi.graph)$type == TRUE] <- filt.be$from_color[match(V(bi.graph)$name[V(bi.graph)$type == TRUE], filt.be$from)]
+V(bi.graph)$outline[V(bi.graph)$type == TRUE] <- filt.be$from_de[match(V(bi.graph)$name[V(bi.graph)$type == TRUE], filt.be$from)]
+
+# To
+V(bi.graph)$fill[V(bi.graph)$type == FALSE] <- filt.be$to_color[match(V(bi.graph)$name[V(bi.graph)$type == FALSE], filt.be$to)]
+V(bi.graph)$outline[V(bi.graph)$type == FALSE] <- filt.be$to_de[match(V(bi.graph)$name[V(bi.graph)$type == FALSE], filt.be$to)]
+
+E(bi.graph)$weight <- filt.be$value
+E(bi.graph)$color <- 'green' # POSITIVE
+E(bi.graph)$color[E(bi.graph)$weight < 1] <- 'red' # NEGATIVE
+
+LO <- layout_as_bipartite(bi.graph)
+LO <- LO[, c(2, 1)]
+LO[, 2] <- LO[, 2] - 3
+
+# Plot the bipartite graph
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/Bact to Euk/BtoE_bipartite.red.pdf', width = 15, height = 15)
+plot(
+  bi.graph,
+  layout = LO,
+  vertex.label.cex = 1.2,
+  vertex.label.family = 'sans',
+  vertex.label.color = 'black',
+  vertex.color = V(bi.graph)$fill,   
+  vertex.frame.color = V(bi.graph)$outline,  
+  vertex.frame.width = 5            
+)
+#dev.off()
+
+```
+
+# Eukaryotes to Bacteria
+
+```{r}
+
+resMat <- read.table('Scripts/Bact.Euk/Res/BE_aIDA/Euk.to.Bact/EtoB_resMat.5.tsv', header = TRUE, sep = '\t')
+
+resMat <- as.matrix(resMat)
+write.table(resMat, file = 'Scripts/Bact.Euk/Res/BE_aIDA/Euk.to.Bact/EtoB_resMat.5.tsv', sep = "\t", dec = '.')
+# Cols = EFFECTS <- BACTERIA
+# Rows = CASUES <- EUKARYOTES
+
+```
+
+```{r}
+
+melt_aIDA <- melt(resMat)
+colnames(melt_aIDA) <- c('Cause', 'Effect', 'Value.aIDA')
+
+ggplot(melt_aIDA, aes(Value.aIDA)) +
+  geom_histogram(binwidth = 0.1, fill = "blue", color = "black") +
+  labs(title = "aIDA Histogram - Bacteria + Eukaryotes", x = "Value", y = "Frequency") +
+  theme_minimal()
+
+#ggsave('Scripts/Bact.Euk/Res/BE_aIDA/BE/BE_histogram.pdf')
+
+```
+
+### Clustering
+
+#### Causes E (ROWS)
+
+```{r}
+
+# Eukaryotes Clustering (rows)
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/Euk.to.Bact/EtoB_cluster.silhoutte.euk.pdf', 10, 5)
+fviz_nbclust(resMat, kmeans, method = "silhouette") # 2
+#dev.off()
+
+k <- kmeans(resMat, centers = 2)
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/Euk.to.Bact/EtoB_cluster.euk.pdf')
+fviz_cluster(k, resMat, main = 'Bacteria cluster plot')
+#dev.off()
+
+```
+
+```{r}
+
+res.df <- data.frame(OTU = names(k$cluster), 
+                     cluster = k$cluster)
+
+write.table(res.df, file = 'Scripts/Bact.Euk/Res/BE_aIDA/Euk.to.Bact/EtoB_cluster.euk.tsv', sep = "\t")
+
+samp <- readRDS('Scripts/timematerialreplicate.rds')
+
+otu.c <- as.data.frame(t(euk.otu.rel))
+otu.c$OTU <- rownames(otu.c)
+otu.c <- merge(otu.c, res.df)
+otu.c$cluster <- as.factor(otu.c$cluster)
+
+otu_long <- otu.c %>%
+  pivot_longer(cols = -c(cluster, OTU), 
+               names_to = "sample", 
+               values_to = "count")
+ 
+otu_summary <- otu_long %>%
+  group_by(sample, cluster) %>%
+  summarise(mean_count = mean(count),
+            log_count = log10(mean_count))
+
+pdf('Scripts/Bact.Euk/Res/BE_aIDA/EtoB_cluster.euk.mean.pdf', width = 10, height = 10)
+ggplot(otu_summary, aes(x = sample, y = mean_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "Eukaryotes", x = "Samples", y = 'Mean relative abundance per cluster') +
+  theme_minimal() +
+  scale_x_discrete(labels = samp) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
+dev.off()
+
+```
+
+#### Effects B (COLS)
+
+```{r}
+
+# Bacteria Clustering (columns)
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/Euk.to.Bact/EtoB_cluster.bact.silhoutte.pdf', 10, 5)
+fviz_nbclust(t(resMat), kmeans, method = "silhouette") # 2
+#dev.off()
+
+k <- kmeans(t(resMat), centers = 2)
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/Euk.to.Bact/EtoB_cluster.bact.pdf')
+fviz_cluster(k, t(resMat), main = 'Bacteria cluster plot')
+#dev.off()
+
+```
+
+
+```{r}
+
+res.df <- data.frame(OTU = names(k$cluster), 
+                     cluster = k$cluster)
+
+write.table(res.df, file = 'Scripts/Bact.Euk/Res/BE_aIDA/Euk.to.Bact/EtoB_cluster.bact.tsv', sep = "\t")
+
+samp <- readRDS('Scripts/timematerialreplicate.rds')
+
+otu.c <- as.data.frame(t(bact.otu.rel))
+otu.c$OTU <- rownames(otu.c)
+otu.c <- merge(otu.c, res.df)
+otu.c$cluster <- as.factor(otu.c$cluster)
+
+otu_long <- otu.c %>%
+  pivot_longer(cols = -c(cluster, OTU), 
+               names_to = "sample", 
+               values_to = "count")
+ 
+otu_summary <- otu_long %>%
+  group_by(sample, cluster) %>%
+  summarise(mean_count = mean(count),
+            log_count = log10(mean_count))
+
+pdf('Scripts/Bact.Euk/Res/BE_aIDA/BtoE_cluster.bact.mean.pdf', width = 10, height = 10)
+ggplot(otu_summary, aes(x = sample, y = mean_count, color = cluster, group = cluster)) +
+  geom_line() +
+  labs(title = "Bacteria", x = "Samples", y = 'Mean relative abundance per cluster') +
+  theme_minimal() +
+  scale_x_discrete(labels = samp) +
+  theme(axis.text.x = element_text(angle = 45, vjust = 0.5, hjust=1))
+dev.off()
+
+```
+
+
+### Heatmap
+
+```{r}
+
+set.seed(2112)
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/Euk.to.Bact/EtoB_heatmap.pdf', width = 20, height = 15)
+Heatmap(resMat, name = "mat", rect_gp = gpar(col = "white", lwd = 1),
+        column_title = 'Effects',
+        row_title = 'Causes',
+        column_km = 2,
+        row_km = 2,
+        show_parent_dend_line = TRUE)
+#dev.off()
+
+# Check the legend (you dont have very stronger interactions)
+
+```
+
+### Bipartite
+
+```{r}
+
+# Convert the matrix into an edge list
+# We'll extract indices where the matrix is 1 (indicating an edge exists)
+
+
+melted_eb <- melt(resMat)
+colnames(melted_eb) <- c('from', 'to', 'value')
+         
+#     Min.   1st Qu.    Median      Mean   3rd Qu.      Max. 
+#-1.062182 -0.125736  0.007522  0.009570  0.144526  1.039891 
+
+```
+
+```{r}
+
+euk.cluster <- read.table('Scripts/Bact.Euk/Res/BE_aIDA/Euk.to.Bact/EtoB_cluster.euk.tsv', sep = "\t")
+
+euk.cl.1 <- subset(euk.cluster, cluster == 1) # 28
+euk.names <- row.names(euk.cl.1)
+
+bact.cluster <- read.table('Scripts/Bact.Euk/Res/BE_aIDA/Bact to Euk/BtoE_cluster.bact.tsv', sep = "\t")
+
+```
+
+#### Purple cluster
+
+```{r}
+
+# PURPLE CLUSTER
+bact.cl.2 <- subset(bact.cluster, cluster == 2) # 34
+bact.names <- row.names(bact.cl.2)
+
+purple.cl <- melted_eb[melted_eb$to %in% bact.names,]
+purple.cl <- purple.cl[purple.cl$from %in% euk.names,]
+# 680
+
+#    Min.  1st Qu.   Median     Mean  3rd Qu.     Max. 
+#-0.89002 -0.19306 -0.07892 -0.10001  0.01376  0.48252 
+
+filt.eb <- purple.cl %>%
+  filter(value <= -0.5) # ONLY NEGATIVES
+# 37
+
+#write.table(filt.eb, file = 'Scripts/Bact.Euk/Res/BE_aIDA/Euk.to.Bact/EtoB_edges.purple.tsv', sep = "\t", dec = '.')
+```
+
+```{r}
+
+# Eukaryotes colors
+asv_taxonomy_e <- as.data.frame(tax_table(eb.ps)) %>%
+  select(phylum) %>%
+  rownames_to_column(var = "ASV") %>%
+  filter(str_starts(ASV, "E_"))
+
+filt.eb <- filt.eb %>%
+  mutate(from_phylum = asv_taxonomy_e$phylum[match(filt.eb$from, asv_taxonomy_e$ASV)]) %>%
+    mutate(from_de = de.ds$expression[match(filt.eb$from, de.ds$taxonomy)])
+
+
+# Bacteria
+asv_taxonomy_b <- as.data.frame(tax_table(eb.ps)) %>%
+  select(phylum) %>%
+  rownames_to_column(var = "ASV") %>%
+  filter(str_starts(ASV, 'B_'))
+
+filt.eb <- filt.eb %>%
+  mutate(to_phylum = asv_taxonomy_b$phylum[match(filt.eb$to, asv_taxonomy_b$ASV)])%>%
+    mutate(to_de = de.ds$expression[match(filt.eb$to, de.ds$taxonomy)])
+
+# Color match
+filt.eb <- filt.eb %>%
+ mutate(from_color = phylum.color[from_phylum],
+         from_de = enrichment.color[from_de],
+         to_color = phylum.color[to_phylum],
+         to_de = enrichment.color[to_de])
+
+```
+
+```{r}
+# Bipartite graph
+bi.graph <- graph_from_data_frame(filt.eb, directed = TRUE) 
+# is bipartite
+
+V(bi.graph)$type <- ifelse(V(bi.graph)$name %in% filt.eb$from, TRUE, FALSE)
+
+# From
+V(bi.graph)$fill[V(bi.graph)$type == TRUE] <- filt.eb$from_color[match(V(bi.graph)$name[V(bi.graph)$type == TRUE], filt.eb$from)]
+V(bi.graph)$outline[V(bi.graph)$type == TRUE] <- filt.eb$from_de[match(V(bi.graph)$name[V(bi.graph)$type == TRUE], filt.eb$from)]
+
+# To
+V(bi.graph)$fill[V(bi.graph)$type == FALSE] <- filt.eb$to_color[match(V(bi.graph)$name[V(bi.graph)$type == FALSE], filt.eb$to)]
+V(bi.graph)$outline[V(bi.graph)$type == FALSE] <- filt.eb$to_de[match(V(bi.graph)$name[V(bi.graph)$type == FALSE], filt.eb$to)]
+
+E(bi.graph)$weight <- filt.eb$value
+E(bi.graph)$color <- 'green' # POSITIVE
+E(bi.graph)$color[E(bi.graph)$weight < 0] <- 'red' # NEGATIVE
+
+# Use layout
+LO <- layout_as_bipartite(bi.graph)
+LO <- LO[, c(2, 1)]
+LO[, 2] <- LO[, 2] - 3
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/Euk.to.Bact/EtoB_bipartite.purple.pdf', width = 15, height = 15)
+plot(
+  bi.graph,
+  layout = LO,
+  vertex.label.cex = 1.2,
+  vertex.label.family = 'sans',
+  vertex.label.color = 'black',
+  vertex.color = V(bi.graph)$fill,   
+  vertex.frame.color = V(bi.graph)$outline,  
+  vertex.frame.width = 5            
+)
+#dev.off()
+
+```
+
+#### Red Cluster
+
+```{r}
+
+# RED CLUSTER
+bact.cl.1 <- subset(bact.cluster, cluster == 1) # 65
+bact.names <- row.names(bact.cl.1)
+
+red.cl <- melted_eb[melted_eb$to %in% bact.names,]
+red.cl <- red.cl[red.cl$from %in% euk.names,]
+# 1820
+
+#   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+#-1.06218  0.05195  0.16103  0.17113  0.28089  1.03989 
+
+filt.eb <- red.cl %>%
+  filter(value >= 0.75)
+# 13
+
+#write.table(filt.eb, file = 'Scripts/Bact.Euk/Res/BE_aIDA/Euk.to.Bact/EtoB_edges.red.tsv', sep = "\t", dec = '.')
+```
+
+```{r}
+
+# Eukaryotes colors
+asv_taxonomy_e <- as.data.frame(tax_table(eb.ps)) %>%
+  select(phylum) %>%
+  rownames_to_column(var = "ASV") %>%
+  filter(str_starts(ASV, "E_"))
+
+filt.eb <- filt.eb %>%
+  mutate(from_phylum = asv_taxonomy_e$phylum[match(filt.eb$from, asv_taxonomy_e$ASV)])   %>%
+  mutate(from_de = de.ds$expression[match(filt.eb$from, de.ds$taxonomy)])
+
+
+# Bacteria
+asv_taxonomy_b <- as.data.frame(tax_table(eb.ps)) %>%
+  select(phylum) %>%
+  rownames_to_column(var = "ASV") %>%
+  filter(str_starts(ASV, 'B_'))
+
+filt.eb <- filt.eb %>%
+  mutate(to_phylum = asv_taxonomy_b$phylum[match(filt.eb$to, asv_taxonomy_b$ASV)]) %>%
+  mutate(to_de = de.ds$expression[match(filt.eb$to, de.ds$taxonomy)])
+
+# Color match
+filt.eb <- filt.eb %>%
+    mutate(from_color = phylum.color[from_phylum],
+         from_de = enrichment.color[from_de],
+         to_color = phylum.color[to_phylum],
+         to_de = enrichment.color[to_de])
+
+```
+
+```{r}
+# Bipartite graph
+bi.graph <- graph_from_data_frame(filt.eb, directed = TRUE) 
+# is bipartite
+
+V(bi.graph)$type <- ifelse(V(bi.graph)$name %in% filt.eb$from, TRUE, FALSE)
+
+# From
+V(bi.graph)$fill[V(bi.graph)$type == TRUE] <- filt.eb$from_color[match(V(bi.graph)$name[V(bi.graph)$type == TRUE], filt.eb$from)]
+V(bi.graph)$outline[V(bi.graph)$type == TRUE] <- filt.eb$from_de[match(V(bi.graph)$name[V(bi.graph)$type == TRUE], filt.eb$from)]
+
+# To
+V(bi.graph)$fill[V(bi.graph)$type == FALSE] <- filt.eb$to_color[match(V(bi.graph)$name[V(bi.graph)$type == FALSE], filt.eb$to)]
+V(bi.graph)$outline[V(bi.graph)$type == FALSE] <- filt.eb$to_de[match(V(bi.graph)$name[V(bi.graph)$type == FALSE], filt.eb$to)]
+
+E(bi.graph)$weight <- filt.eb$value
+E(bi.graph)$color <- 'green' # POSITIVE
+E(bi.graph)$color[E(bi.graph)$weight < 0] <- 'red' # NEGATIVE
+
+# Use layout
+LO <- layout_as_bipartite(bi.graph)
+LO <- LO[, c(2, 1)]
+LO[, 2] <- LO[, 2] - 3
+
+#pdf('Scripts/Bact.Euk/Res/BE_aIDA/Euk.to.Bact/EtoB_bipartite.red.pdf', width = 15, height = 15)
+plot(
+  bi.graph,
+  layout = LO,
+  vertex.label.cex = 1.2,
+  vertex.label.family = 'sans',
+  vertex.label.color = 'black',
+  vertex.color = V(bi.graph)$fill,   
+  vertex.frame.color = V(bi.graph)$outline,  
+  vertex.frame.width = 5            
+)
+#dev.off()
+
+```
+
+# Algorithm
+
+```{r, eval=FALSE, print = FALSE, include=FALSE}
+
+## Path source aIDA.R
+source('Scripts/aIDA/aIDA.R')
+
+alpha <- 0.5 # parameter of PC algorithm
+#not higher than 0.5
+
+otu <- be.vst
+  
+vars <- ncol(otu)      # OTU
+samples <- nrow(otu)   # Samples
+  
+data <- otu
+  
+causes <- 1:99
+targets <- 100:157
+  
+  
+#### Subsampling
+n <- nrow(data)
+subSize <- floor(n/2) 
+  
+effectsN <- vector("list", length =length(causes))
+  
+for(i in 1:100)
+  {
+  	print(i)
+  
+  	subIndices <- sample(n, subSize, replace = FALSE)
+  
+  	subDat <- data[subIndices,] 
+  
+  	# Apply PC algorithm 
+  	indepTest <- gaussCItest
+  	suffStat <- list(C=cor(subDat), n=subSize)
+  	skel <- skeleton(suffStat, indepTest, p=ncol(subDat), 
+  	                 alpha, method="stable")
+  	pc.fit <-udag2pdagRelaxed(skel,solve.confl=FALSE)
+  
+  	# Estimate causal effects for each cause and each subsampling run using IDA
+  	for (j in 1:length(causes))
+  {
+  		cause <- causes[j]
+  		effects1 <- idaFast(cause,targets,cov(subDat),pc.fit@graph)
+  
+  		effectsN[[cause]] <- cbind(effectsN[[cause]],effects1)
+  
+  	}
+}
+
+#The row index corresponds to a specific target variable (effect), while the column index corresponds to a specific cause variable.
+# The value in a particular cell of effectsN gives the estimated causal effect of the cause (column) on the effect (row).
+  
+resMat <- do.call(rbind, lapply(effectsN, getEstimEffectsPerCause))
+rownames(resMat) <- colnames(otu)[1:99]
+colnames(resMat) <- colnames(otu)[100:157] # matrix
+  
+out <- 'Scripts/Bact.Euk/Res/BtoE_resMat.5.tsv'
+write.table(resMat, file = out, sep = "\t")
+
+```
